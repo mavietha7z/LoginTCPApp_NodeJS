@@ -8,7 +8,7 @@ Chuyển đổi từ file `LoginTCPApp.py` gốc sang Node.js **ES Module, Node 
 
 ```text
 LoginTCPApp_NodeJS/
-├── server.js                          # POST /api/login, API key, kiểm soát đồng thời
+├── server.js                          # POST /api/login/garena, API key, kiểm soát đồng thời
 ├── package.json                       # npm start / npm test
 ├── .env.example                       # Mẫu cấu hình
 ├── .gitignore
@@ -81,10 +81,10 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:5000/health'
 
 **Python gốc:** `GET /api/login?username=...&password=...&proxy=...` (không an toàn).
 
-**Node.js:** `POST /api/login` với `Content-Type: application/json` và header `X-API-Key`. Proxy được cấu hình ở máy chủ, không cho người gọi chỉ định proxy bất kỳ.
+**Node.js:** `POST /api/login/garena` với `Content-Type: application/json` và header `X-API-Key`. Proxy được cấu hình ở máy chủ, không cho người gọi chỉ định proxy bất kỳ.
 
 ```http
-POST /api/login HTTP/1.1
+POST /api/login/garena HTTP/1.1
 Host: 127.0.0.1:5000
 Content-Type: application/json
 X-API-Key: <your-secret-from-env>
@@ -99,7 +99,7 @@ $apiKey = Read-Host 'Nhap API_KEY'
 $username = Read-Host 'Nhap username'
 $password = Read-Host 'Nhap password'
 $body = @{ username = $username; password = $password } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:5000/api/login' `
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:5000/api/login/garena' `
   -Headers @{ 'X-API-Key' = $apiKey } `
   -ContentType 'application/json' -Body $body
 ```
@@ -124,7 +124,7 @@ Ví dụ một mã lỗi:
 { "code": 105, "uid": null, "session_key": null, "sso_key": null, "message": "ERROR_CAPTCHA" }
 ```
 
-Hệ thống không cố bỏ qua CAPTCHA. `GET /api/login` đã bị bỏ để tránh rò rỉ mật khẩu. Các request thiếu API key trả HTTP 401. Lỗi ở tầng HTTP (401, 404, 415, 429, 400, 413, 502) có dạng `{ "code": -1, "message": "..." }` (502 dùng `code: -999`).
+Hệ thống không cố bỏ qua CAPTCHA. `GET /api/login` của Python đã bị bỏ để tránh rò rỉ mật khẩu. Các request thiếu API key trả HTTP 401. Lỗi ở tầng HTTP (401, 404, 415, 429, 400, 413, 502) có dạng `{ "code": -1, "message": "..." }` (502 dùng `code: -999`).
 
 ## Các biến môi trường
 

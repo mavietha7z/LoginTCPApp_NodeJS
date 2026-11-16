@@ -59,7 +59,7 @@ Trình tự đăng nhập trong `loginAndGetKeys` (mỗi lần retry mở kết 
 
 ### Các quyết định có chủ ý (khác Python)
 
-- HTTP: chỉ `POST /api/login` (JSON) + header `X-API-Key` (so sánh `timingSafeEqual`), `GET /health`; không nhận `proxy` từ request (proxy chỉ cấu hình qua `SOCKS_PROXY_URL`); bind mặc định `127.0.0.1`; giới hạn đồng thời `MAX_CONCURRENT_LOGINS`.
+- HTTP: chỉ `POST /api/login/garena` (JSON) + header `X-API-Key` (so sánh `timingSafeEqual`), `GET /health`; không nhận `proxy` từ request (proxy chỉ cấu hình qua `SOCKS_PROXY_URL`); bind mặc định `127.0.0.1`; giới hạn đồng thời `MAX_CONCURRENT_LOGINS`.
 - Chỉ retry mã 110 (ERROR_DECRYPT) và lỗi transport/thiếu dữ liệu; **không retry CAPTCHA (105) hay lỗi xác thực**, không cài đặt bỏ qua CAPTCHA/OTP.
 - SOCKS5/SOCKS5h tự cài trên `node:net` (có user/pass auth); `socks5://` resolve DNS cục bộ, `socks5h://` để proxy resolve.
 - `TcpClient` đọc chính xác số byte qua buffer nội bộ, giới hạn `MAX_PACKET_BYTES`, không hỗ trợ đọc đồng thời trên cùng kết nối.

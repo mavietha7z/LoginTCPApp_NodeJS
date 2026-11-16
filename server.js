@@ -8,8 +8,13 @@ import { loginAndGetKeys } from './src/services/login-service.js';
 
 /**
  * HTTP API bọc dịch vụ đăng nhập. Thay cho route Flask `GET /api/login` trong `LoginTCPApp.py`
- * (dòng 985–1006): chỉ nhận `POST /api/login` kèm header `X-API-Key`, và `GET /health`.
+ * (dòng 985–1006): chỉ nhận `POST /api/login/garena` kèm header `X-API-Key`, và `GET /health`.
  */
+
+/**
+ * Đường dẫn API đăng nhập (chỉ nhận phương thức POST).
+ */
+const LOGIN_ROUTE_PATH = '/api/login/garena';
 
 /**
  * Độ dài tối đa của username và password nhận từ request.
@@ -138,7 +143,7 @@ function createServer(configuration, loginService = loginAndGetKeys) {
             return;
         }
 
-        if (request.url !== '/api/login' || request.method !== 'POST') {
+        if (request.url !== LOGIN_ROUTE_PATH || request.method !== 'POST') {
             sendJson(response, 404, { code: -1, message: 'Không tìm thấy' });
 
             return;

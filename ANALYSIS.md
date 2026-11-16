@@ -161,7 +161,7 @@ Python dùng `GET` cho tài khoản, mật khẩu và proxy; không yêu cầu A
 
 Node.js thay thành:
 
-- `POST /api/login` với JSON body.
+- `POST /api/login/garena` với JSON body.
 - Header bắt buộc `X-API-Key` dùng `crypto.timingSafeEqual`.
 - Không nhận `proxy` từ request; proxy chỉ cấu hình trong `.env`.
 - Mặc định bind `127.0.0.1` thay vì mở toàn mạng.

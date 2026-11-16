@@ -147,7 +147,7 @@ test('HTTP API requires API key, POST, and valid JSON', async (context) => {
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     context.after(() => new Promise((resolve) => server.close(resolve)));
     const port = server.address().port;
-    const endpoint = `http://127.0.0.1:${port}/api/login`;
+    const endpoint = `http://127.0.0.1:${port}/api/login/garena`;
     const unauthorized = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
