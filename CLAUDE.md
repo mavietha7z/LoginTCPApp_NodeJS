@@ -9,9 +9,9 @@ Người dùng làm việc bằng **tiếng Việt**: trả lời, giải thích
 Quy ước code:
 
 - Comment trong code viết bằng **tiếng Việt**, luôn dùng dạng khối nhiều dòng (`/** ... */` cho class/hàm/hằng số, `/* ... */` cho giải thích bên trong hàm), **không dùng `//`** và **không dùng thẻ JSDoc `@param`/`@returns`/`@throws`**. Mỗi class/hàm/method có mô tả mục đích, dòng tương ứng trong `LoginTCPApp.py`, rồi gạch đầu dòng: ``- `tênThamSố` (kiểu, không bắt buộc / mặc định x): mô tả``, `- Trả về (kiểu): ...`, `- Ném lỗi Kiểu: ...`.
-- Tên hàm/biến viết bằng tiếng Anh, **không viết tắt** (`maximumRetries`, `readTimeoutMilliseconds`, `configuration`; không dùng `max…`, `…Ms`, `config`, `msg`). Ngoại lệ: từ viết tắt chuẩn ngành (XTEA, TCP, SSO, JSON, HTTP, UTF-8, SOCKS5, MD5, SHA256, varint, `Lrand48`).
+- Tên hàm/biến viết bằng tiếng Anh, **không viết tắt** (`maximumRetries`, `readTimeoutMilliseconds`, `configuration`; không dùng `max…`, `…Ms`, `config`). Ngoại lệ: từ viết tắt chuẩn ngành (XTEA, TCP, SSO, JSON, HTTP, UTF-8, SOCKS5, MD5, SHA256, varint, `Lrand48`).
 - Không lồng nhiều lệnh gọi trên một dòng; tách thành biến trung gian có tên rõ nghĩa.
-- Giữ nguyên các tên thuộc hợp đồng bên ngoài: biến môi trường (`MAX_RETRIES`, `*_MS`…), key JSON trả về (`uid`, `session_key`, `sso_key`, `msg`, `SsoKeyGetReply`), key đối chiếu Python (`encrypt_key`, `verify_code`, `message_type`, `command_type`), và hàm `loginAndGetKeys`.
+- Giữ nguyên các tên thuộc hợp đồng bên ngoài: biến môi trường (`MAX_RETRIES`, `*_MS`…), key JSON trả về (`code`, `uid`, `session_key`, `sso_key`, `message`; không có `msg`, `attempts`, `duration`, `SsoKeyGetReply`), key đối chiếu Python (`encrypt_key`, `verify_code`, `message_type`, `command_type`), và hàm `loginAndGetKeys`.
 - Thông báo lỗi (`new Error(...)`) giữ tiếng Anh vì một số được trả thẳng ra API và test có so khớp.
 - ES Module: dùng `import`/`export` có tên (không default export); đường dẫn nội bộ phải ghi đủ đuôi `.js`; file JSON nạp bằng `import ... with { type: 'json' }`. Không có `require`, `module.exports`, `__dirname`.
 

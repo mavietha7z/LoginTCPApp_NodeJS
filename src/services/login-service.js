@@ -1,5 +1,3 @@
-import { performance } from 'node:perf_hooks';
-
 import { generateEncryptionKey } from '../crypto/encryption-key.js';
 import { TcpClient, TimeoutError } from '../transport/tcp-client.js';
 import { EmptyPacket, LoginPrepareRequest, LoginRequest, LoginTokenGetRequest } from '../protocol/requests.js';
@@ -57,34 +55,30 @@ const INTERNAL_ERROR_CODES = Object.freeze({
 });
 
 /**
- * Tính thời gian đã trôi qua, làm tròn 2 chữ số thập phân (giống `round(..., 2)` của Python).
- *
- * - `startTime` (number): Mốc thời gian lấy từ `performance.now()`.
- * - Trả về (number): Số giây đã trôi qua.
+ * Thông báo trả về khi đăng nhập thành công (ứng với mã 0 = SUCCESS trong `system-errors.json`).
  */
-function calculateElapsedSeconds(startTime) {
-    return Math.round((performance.now() - startTime) / 10) / 100;
-}
+const SUCCESS_MESSAGE = 'SUCCESS';
+
+/**
+ * Thông báo dùng khi không có lần thử nào được thực hiện (ví dụ maximumRetries = 0).
+ */
+const NO_ATTEMPT_MESSAGE = 'Chưa thực hiện lần đăng nhập nào';
 
 /**
  * Dựng object kết quả lỗi trả về cho người gọi.
  *
  * - `code` (number): Mã lỗi (của máy chủ hoặc nội bộ).
- * - `message` (string|null): Mô tả lỗi; bỏ qua nếu rỗng.
- * - `startTime` (number): Mốc bắt đầu, dùng để tính `duration`.
- * - `attempts` (number): Số lần đã thử.
- * - Trả về (object): Kết quả lỗi dạng { code: number, msg?: string, duration: number, attempts: number }.
+ * - `message` (string|null): Mô tả lỗi; nếu rỗng thì dùng thông báo mặc định.
+ * - Trả về (object): Kết quả lỗi dạng { code, uid: null, session_key: null, sso_key: null, message }.
  */
-function buildErrorResult(code, message, startTime, attempts) {
-    const result = { code };
-    if (message) {
-        result.msg = message;
-    }
-
-    result.duration = calculateElapsedSeconds(startTime);
-    result.attempts = attempts;
-
-    return result;
+function buildErrorResult(code, message) {
+    return {
+        code,
+        uid: null,
+        sso_key: null,
+        session_key: null,
+        message: message || NO_ATTEMPT_MESSAGE,
+    };
 }
 
 /**
@@ -118,11 +112,10 @@ function isEndOfResponseStream(error) {
  *   - `options.responseWindowMilliseconds` (number, mặc định 3000): Tổng thời gian chờ SsoKeyGetReply.
  *   - `options.responseIdleTimeoutMilliseconds` (number, mặc định 500): Thời gian chờ tối đa giữa hai frame.
  *   - `options.maximumFollowUpFrames` (number, mặc định 64): Số frame tối đa đọc khi chờ SSO key.
- * - Trả về (Promise<object>): Khi thành công: { code: 0, uid, session_key, SsoKeyGetReply: { sso_key }, duration, attempts };
- *   khi thất bại: { code, msg?, duration, attempts }.
+ * - Trả về (Promise<object>): Luôn có đủ 5 field { code, uid, session_key, sso_key, message }.
+ *   Thành công: code = 0, message = 'SUCCESS'. Thất bại: code khác 0, uid/session_key/sso_key = null.
  */
 async function loginAndGetKeys(account, password, options = {}) {
-    const startTime = performance.now();
     const randomMode = options.randomMode || 'legacy';
     const maximumRetries = options.maximumRetries ?? 3;
     const requestOptions = { deviceIdentifier: options.deviceIdentifier, randomMode };
@@ -152,7 +145,7 @@ async function loginAndGetKeys(account, password, options = {}) {
                  * Không tự thử lại khi gặp CAPTCHA, lỗi xác thực hoặc tài khoản bị khóa.
                  */
                 if (!RETRYABLE_ERROR_CODES.has(lastErrorCode)) {
-                    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attempt);
+                    return buildErrorResult(lastErrorCode, lastErrorMessage);
                 }
 
                 continue;
@@ -187,7 +180,7 @@ async function loginAndGetKeys(account, password, options = {}) {
                 lastErrorMessage = loginReply.message;
 
                 if (!RETRYABLE_ERROR_CODES.has(lastErrorCode)) {
-                    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attempt);
+                    return buildErrorResult(lastErrorCode, lastErrorMessage);
                 }
 
                 continue;
@@ -228,7 +221,7 @@ async function loginAndGetKeys(account, password, options = {}) {
                 lastErrorMessage = tokenReply.message;
 
                 if (!RETRYABLE_ERROR_CODES.has(lastErrorCode)) {
-                    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attempt);
+                    return buildErrorResult(lastErrorCode, lastErrorMessage);
                 }
 
                 continue;
@@ -281,11 +274,10 @@ async function loginAndGetKeys(account, password, options = {}) {
             if (ssoKey && ssoKey.length >= 8) {
                 return {
                     code: 0,
-                    attempts: attempt,
+                    sso_key: ssoKey,
                     uid: loginData.uid,
                     session_key: sessionKey,
-                    SsoKeyGetReply: { sso_key: ssoKey },
-                    duration: calculateElapsedSeconds(startTime),
+                    message: SUCCESS_MESSAGE,
                 };
             }
 
@@ -295,7 +287,7 @@ async function loginAndGetKeys(account, password, options = {}) {
             lastErrorCode = INTERNAL_ERROR_CODES.TRANSPORT_ERROR;
 
             /*
-             * LƯU Ý: error.message hiện vẫn được trả ra HTTP qua trường `msg`, có thể lộ địa chỉ
+             * LƯU Ý: error.message hiện vẫn được trả ra HTTP qua trường `message`, có thể lộ địa chỉ
              * máy chủ/proxy (lỗi đã ghi nhận khi audit, chưa sửa vì đợt này giữ nguyên logic).
              */
             lastErrorMessage = error instanceof TimeoutError ? 'Kết nối TCP hết thời gian chờ' : error.message;
@@ -304,11 +296,7 @@ async function loginAndGetKeys(account, password, options = {}) {
         }
     }
 
-    /*
-     * Sau vòng lặp, attempt = maximumRetries + 1 nên số lần đã thử là attempt - 1.
-     */
-    const attemptCount = Math.min(attempt - 1, maximumRetries);
-    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attemptCount);
+    return buildErrorResult(lastErrorCode, lastErrorMessage);
 }
 
 export { loginAndGetKeys };

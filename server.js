@@ -139,27 +139,27 @@ function createServer(configuration, loginService = loginAndGetKeys) {
         }
 
         if (request.url !== '/api/login' || request.method !== 'POST') {
-            sendJson(response, 404, { code: -1, error: 'Không tìm thấy' });
+            sendJson(response, 404, { code: -1, message: 'Không tìm thấy' });
 
             return;
         }
 
         const apiKey = request.headers['x-api-key'];
         if (!isApiKeyMatchingInConstantTime(apiKey, configuration.apiKey)) {
-            sendJson(response, 401, { code: -1, error: 'API key không hợp lệ' });
+            sendJson(response, 401, { code: -1, message: 'API key không hợp lệ' });
 
             return;
         }
 
         const contentType = request.headers['content-type'];
         if (!contentType?.toLowerCase().startsWith('application/json')) {
-            sendJson(response, 415, { code: -1, error: 'Content-Type phải là application/json' });
+            sendJson(response, 415, { code: -1, message: 'Content-Type phải là application/json' });
 
             return;
         }
 
         if (activeLoginCount >= configuration.maximumConcurrentLogins) {
-            sendJson(response, 429, { code: -1, error: 'Quá nhiều yêu cầu đăng nhập đồng thời' });
+            sendJson(response, 429, { code: -1, message: 'Quá nhiều yêu cầu đăng nhập đồng thời' });
 
             return;
         }
@@ -168,7 +168,7 @@ function createServer(configuration, loginService = loginAndGetKeys) {
         try {
             payload = await readJsonBody(request);
         } catch (error) {
-            sendJson(response, error.statusCode || 400, { code: -1, error: error.message });
+            sendJson(response, error.statusCode || 400, { code: -1, message: error.message });
 
             return;
         }
@@ -176,7 +176,7 @@ function createServer(configuration, loginService = loginAndGetKeys) {
         const username = payload?.username;
         const password = payload?.password;
         if (!areCredentialsValid(username, password)) {
-            sendJson(response, 400, { code: -1, error: 'Thiếu hoặc không hợp lệ username/password' });
+            sendJson(response, 400, { code: -1, message: 'Thiếu hoặc không hợp lệ username/password' });
 
             return;
         }
@@ -194,7 +194,7 @@ function createServer(configuration, loginService = loginAndGetKeys) {
 
             sendJson(response, 200, result);
         } catch {
-            sendJson(response, 502, { code: -999, error: 'Dịch vụ đăng nhập gặp lỗi nội bộ' });
+            sendJson(response, 502, { code: -999, message: 'Dịch vụ đăng nhập gặp lỗi nội bộ' });
         } finally {
             activeLoginCount -= 1;
         }

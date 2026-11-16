@@ -104,16 +104,15 @@ Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:5000/api/login' `
   -ContentType 'application/json' -Body $body
 ```
 
-Kết quả thành công có định dạng tương tự Python:
+Mọi kết quả đăng nhập đều có đủ 5 field `code`, `uid`, `session_key`, `sso_key`, `message`. Kết quả thành công:
 
 ```json
 {
     "code": 0,
     "uid": 123456,
     "session_key": "<32 hex characters>",
-    "SsoKeyGetReply": { "sso_key": "<secret-sso-key>" },
-    "duration": 0.62,
-    "attempts": 1
+    "sso_key": "<secret-sso-key>",
+    "message": "SUCCESS"
 }
 ```
 
@@ -122,10 +121,10 @@ Kết quả thành công có định dạng tương tự Python:
 Ví dụ một mã lỗi:
 
 ```json
-{ "code": 105, "msg": "ERROR_CAPTCHA", "duration": 0.17, "attempts": 1 }
+{ "code": 105, "uid": null, "session_key": null, "sso_key": null, "message": "ERROR_CAPTCHA" }
 ```
 
-Hệ thống không cố bỏ qua CAPTCHA. `GET /api/login` đã bị bỏ để tránh rò rỉ mật khẩu. Các request thiếu API key trả HTTP 401.
+Hệ thống không cố bỏ qua CAPTCHA. `GET /api/login` đã bị bỏ để tránh rò rỉ mật khẩu. Các request thiếu API key trả HTTP 401. Lỗi ở tầng HTTP (401, 404, 415, 429, 400, 413, 502) có dạng `{ "code": -1, "message": "..." }` (502 dùng `code: -999`).
 
 ## Các biến môi trường
 

@@ -106,11 +106,11 @@ test('the full login sequence parses the mocked server and returns keys', async 
         transportFactory: () => transport,
         maximumRetries: 1,
     });
-    assert.equal(result.code, 0, result.msg);
+    assert.equal(result.code, 0, result.message);
     assert.equal(result.uid, 123456);
     assert.equal(result.session_key, sessionKey.toString('hex'));
-    assert.equal(result.SsoKeyGetReply.sso_key, 'mock-sso-key-123');
-    assert.equal(result.attempts, 1);
+    assert.equal(result.sso_key, 'mock-sso-key-123');
+    assert.equal(result.message, 'SUCCESS');
     assert.equal(transport.requestCount, 3);
     assert.ok(transport.batchSent.length > 6 * 4);
     assert.equal(transport.closed, true);
@@ -127,7 +127,8 @@ test('CAPTCHA response 105 is not retried or bypassed', async () => {
         maximumRetries: 3,
     });
     assert.equal(result.code, 105);
-    assert.equal(result.attempts, 1);
+    assert.equal(result.message, 'ERROR_CAPTCHA');
+    assert.equal(result.sso_key, null);
     assert.equal(transportCreated, 1);
 });
 
@@ -258,8 +259,8 @@ test('end-to-end login works against a local TCP protocol simulator', async (con
             connectTimeoutMilliseconds: 1000,
         },
     });
-    assert.equal(result.code, 0, result.msg);
+    assert.equal(result.code, 0, result.message);
     assert.equal(result.uid, 123456);
-    assert.equal(result.SsoKeyGetReply.sso_key, 'mock-sso-key-123');
+    assert.equal(result.sso_key, 'mock-sso-key-123');
     assert.deepEqual(receivedCommands, [256, 257, 277, 278, 511, 276, 278, 442, 342]);
 });

@@ -148,7 +148,7 @@ Nếu đổi `TCP_SERVER_HOST` hoặc `TCP_SERVER_PORT`, hoặc sửa file trong
 - **Tắt đăng nhập SSH bằng mật khẩu** cho mọi user, sau khi đã chắc chắn đăng nhập bằng key được: đặt `PasswordAuthentication no` trong `/etc/ssh/sshd_config.d/`, rồi chạy `sudo sshd -t && sudo systemctl reload ssh`.
 - **Giới hạn IP gọi API:** nếu chỉ backend của bạn gọi API, bỏ comment khối `@notAllowed` trong `/etc/caddy/Caddyfile` rồi chạy `sudo systemctl reload caddy`.
 - **Không bật `log` trong Caddyfile:** access log ghi cả header `X-API-Key`.
-- **Sửa các lỗi audit trước khi chạy thật:** `error.message` (chứa địa chỉ máy chủ/proxy) đang bị trả ra trường `msg` của API, và giới hạn số request đồng thời có thể bị vượt qua.
+- **Sửa các lỗi audit trước khi chạy thật:** `error.message` (chứa địa chỉ máy chủ/proxy) đang bị trả ra trường `message` của API, và giới hạn số request đồng thời có thể bị vượt qua.
 
 ## 8. Gỡ lỗi
 
