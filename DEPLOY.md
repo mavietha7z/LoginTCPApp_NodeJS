@@ -4,7 +4,7 @@ Mô hình triển khai:
 
 ```text
 VPS (Ubuntu 24.04)
-  Internet ─HTTPS─▶ Caddy (api-gateway.ha2cm.com) ─▶ 127.0.0.1:6666 Node ─TCP thẳng─▶ 103.247.205.15:19000
+  Người dùng ─HTTPS─▶ Cloudflare ─HTTP:80 (Flexible)─▶ Caddy ─▶ 127.0.0.1:6666 Node ─TCP thẳng─▶ 103.247.205.15:19000
 
 Máy local (Windows, khi phát triển)
   Node local ─▶ 127.0.0.1:1080 ══ SSH tunnel (user `tunnel`) ══▶ VPS ─▶ 103.247.205.15:19000
@@ -20,13 +20,16 @@ Các file cấu hình nằm trong thư mục `deploy/`:
 | ----------------------- | -------------------------------------------------- |
 | `setup-vps.sh`          | Script cài đặt toàn bộ, chạy lại nhiều lần được    |
 | `login-tcp-api.service` | Dịch vụ systemd chạy app, tự khởi động lại khi lỗi |
-| `Caddyfile`             | Reverse proxy + HTTPS tự động cho domain           |
+| `Caddyfile`             | Reverse proxy cho domain (theo `SSL_MODE`)         |
 | `sshd-tunnel.conf`      | Giới hạn quyền SSH của user `tunnel`               |
 
 ## 1. Chuẩn bị
 
 - **VPS:** Ubuntu 24.04 LTS, 1 vCPU, 1 GB RAM, 10–20 GB SSD là đủ. Nên chọn vị trí gần máy chủ TCP để độ trễ thấp.
-- **DNS:** tạo bản ghi `A` `api-gateway.ha2cm.com` trỏ về IP của VPS. Nếu dùng Cloudflare, để chế độ **DNS only** (đám mây xám) cho tới khi Caddy cấp xong chứng chỉ.
+- **DNS và SSL trên Cloudflare:** bản ghi `A` `api-gateway.ha2cm.com` trỏ về IP VPS, bật **Proxied** (đám mây cam). SSL/TLS chọn **Flexible**, nên bật thêm **Always Use HTTPS**.
+  - Ở chế độ Flexible, Cloudflare gọi VPS bằng **HTTP cổng 80**. Script cấu hình Caddy chỉ nghe HTTP (`SSL_MODE=flexible`, mặc định) để tránh vòng lặp chuyển hướng `ERR_TOO_MANY_REDIRECTS`.
+  - **Rủi ro:** đoạn Cloudflare → VPS không mã hóa, trong khi request chứa username/mật khẩu và response chứa `session_key`/`sso_key`. Script giảm rủi ro bằng cách chỉ cho các dải IP của Cloudflare vào cổng 80, nhưng không mã hóa được đoạn này.
+  - Muốn chuyển sang **Full (strict)** sau này: tạm để bản ghi DNS only (đám mây xám), chạy lại script với `SSL_MODE=full` để Caddy xin chứng chỉ, rồi bật lại Proxied và chọn Full (strict).
 - **SSH key cho tunnel:** tạo trên máy local Windows (PowerShell):
 
 ```powershell
@@ -61,9 +64,9 @@ Script sẽ:
 2. Tạo user `logintcp` (chạy app) và `tunnel` (chỉ dùng cho SOCKS tunnel).
 3. Tạo `/opt/login-tcp-api/.env` nếu chưa có: sinh `API_KEY` ngẫu nhiên, đặt `HTTP_HOST=127.0.0.1`, `HTTP_PORT=6666`. Nếu `SOCKS_PROXY_URL` đang bật thì tắt đi.
 4. Cài và khởi động dịch vụ `login-tcp-api`.
-5. Cấu hình Caddy cho domain. HTTPS tự cấp khi DNS đã trỏ đúng.
-6. Bật firewall: chỉ mở cổng SSH đang dùng, 80 và 443.
-7. Kiểm tra app có phản hồi `/health`, và VPS có kết nối được tới máy chủ TCP.
+5. Cấu hình Caddy cho domain: `SSL_MODE=flexible` (mặc định) chỉ nghe HTTP cổng 80; `SSL_MODE=full` tự xin chứng chỉ HTTPS.
+6. Bật firewall: mở cổng SSH đang dùng; với `flexible` chỉ cho dải IP Cloudflare vào cổng 80, với `full` mở 80 và 443.
+7. Kiểm tra app và Caddy có phản hồi `/health`, và VPS có kết nối được tới máy chủ TCP.
 
 Xem `API_KEY` vừa tạo:
 
@@ -154,7 +157,8 @@ Nếu đổi `TCP_SERVER_HOST` hoặc `TCP_SERVER_PORT`, hoặc sửa file trong
 
 | Hiện tượng                                                 | Kiểm tra                                                                                                                   |
 | ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Domain không vào được HTTPS                                | `sudo journalctl -u caddy -n 50`; DNS đã trỏ đúng IP chưa; cổng 80/443 có bị nhà cung cấp chặn không                       |
+| Domain lỗi 52x hoặc không vào được                         | `sudo journalctl -u caddy -n 50`; bản ghi DNS đã trỏ đúng IP và bật Proxied chưa; `sudo ufw status` có các dải IP Cloudflare ở cổng 80 chưa |
+| Trình duyệt báo `ERR_TOO_MANY_REDIRECTS`                   | Chế độ SSL trên Cloudflare khác `SSL_MODE` của script: Flexible phải đi với `SSL_MODE=flexible` (Caddy chỉ nghe HTTP) |
 | API trả 502 hoặc không phản hồi                            | `sudo systemctl status login-tcp-api`, `sudo journalctl -u login-tcp-api -n 50`                                            |
 | Đăng nhập trả `code: -5`                                   | VPS tới máy chủ TCP: `nc -vz 103.247.205.15 19000`; ở local: tunnel còn chạy không                                         |
 | `ssh -N login-tcp-tunnel` báo `Permission denied`          | Public key đã nằm trong `/home/tunnel/.ssh/authorized_keys` chưa; đường dẫn `IdentityFile` đúng chưa                       |

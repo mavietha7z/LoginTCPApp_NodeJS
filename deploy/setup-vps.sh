@@ -3,7 +3,7 @@
 # Cài đặt Login TCP API lên VPS Ubuntu 24.04 LTS.
 #
 # Việc script làm:
-#   - Cài Node.js 24 (NodeSource), Caddy (HTTPS tự động), ufw.
+#   - Cài Node.js 24 (NodeSource), Caddy (reverse proxy), ufw.
 #   - Tạo user `logintcp` chạy app và user `tunnel` chỉ dùng cho SOCKS tunnel từ máy local.
 #   - Tạo .env cho VPS: gọi thẳng máy chủ TCP (không proxy), chỉ lắng nghe 127.0.0.1.
 #   - Cài dịch vụ systemd, cấu hình Caddy cho domain, cấu hình SSH cho user tunnel, bật firewall.
@@ -12,6 +12,10 @@
 #   sudo DOMAIN=api-gateway.ha2cm.com \
 #        TUNNEL_PUBLIC_KEY="ssh-ed25519 AAAA... may-local" \
 #        bash /opt/login-tcp-api/deploy/setup-vps.sh
+#
+# SSL_MODE (mặc định flexible) phải khớp chế độ SSL/TLS trên Cloudflare:
+#   - flexible: Cloudflare gọi VPS bằng HTTP. Caddy chỉ nghe cổng 80, firewall chỉ cho dải IP Cloudflare vào cổng 80.
+#   - full:     Caddy tự xin chứng chỉ Let's Encrypt (dùng với Cloudflare "Full (strict)"), mở cổng 80 và 443.
 #
 # Chạy lại nhiều lần được: không ghi đè .env đã có, không thêm trùng public key.
 
@@ -23,6 +27,7 @@ APP_USER="logintcp"
 TUNNEL_USER="tunnel"
 TUNNEL_PUBLIC_KEY="${TUNNEL_PUBLIC_KEY:-}"
 DEFAULT_APP_PORT="6666"
+SSL_MODE="${SSL_MODE:-flexible}"
 
 log() { printf '\n\033[1;32m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m[cảnh báo] %s\033[0m\n' "$*"; }
@@ -45,6 +50,7 @@ set_env_value() {
 }
 
 [[ $EUID -eq 0 ]] || fail "Cần chạy bằng root (sudo)."
+[[ "$SSL_MODE" == "flexible" || "$SSL_MODE" == "full" ]] || fail "SSL_MODE chỉ nhận flexible hoặc full."
 [[ -f "$APP_DIR/server.js" ]] || fail "Không thấy $APP_DIR/server.js. Hãy clone code vào $APP_DIR trước."
 if ! grep -q 'VERSION_ID="24.04"' /etc/os-release; then
     warn "Script được viết cho Ubuntu 24.04; hệ điều hành hiện tại có thể cần chỉnh."
@@ -139,22 +145,45 @@ systemctl daemon-reload
 systemctl enable login-tcp-api >/dev/null
 systemctl restart login-tcp-api
 
-log "Cấu hình Caddy cho $DOMAIN"
+log "Cấu hình Caddy cho $DOMAIN (SSL_MODE=$SSL_MODE)"
 if [[ -f /etc/caddy/Caddyfile && ! -f /etc/caddy/Caddyfile.original ]]; then
     cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.original
 fi
-sed -e "s|__DOMAIN__|${DOMAIN}|g" -e "s|__APP_PORT__|${app_port}|g" \
+if [[ "$SSL_MODE" == "flexible" ]]; then
+    # Chỉ HTTP: không xin chứng chỉ và không chuyển hướng sang HTTPS (tránh vòng lặp với Cloudflare Flexible).
+    site_address="http://${DOMAIN}"
+else
+    site_address="${DOMAIN}"
+fi
+sed -e "s|__SITE_ADDRESS__|${site_address}|g" -e "s|__APP_PORT__|${app_port}|g" \
     "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl reload caddy || systemctl restart caddy
 
-log "Bật firewall (chỉ mở SSH, 80, 443)"
+log "Bật firewall"
 # Mở đúng cổng SSH đang dùng (kể cả khi không phải 22) để không tự khóa mình ngoài VPS.
 for ssh_port in $(sshd -T 2>/dev/null | awk '$1 == "port" { print $2 }'); do
     ufw allow "${ssh_port}/tcp" >/dev/null
 done
-ufw allow 80/tcp >/dev/null
-ufw allow 443/tcp >/dev/null
+# Xóa quy tắc mở cổng web cho mọi IP của lần chạy trước (nếu có), rồi mở lại theo SSL_MODE.
+ufw delete allow 80/tcp >/dev/null 2>&1 || true
+ufw delete allow 443/tcp >/dev/null 2>&1 || true
+if [[ "$SSL_MODE" == "flexible" ]]; then
+    # Chỉ dải IP Cloudflare được vào cổng 80, để không ai gọi thẳng HTTP vào VPS mà bỏ qua Cloudflare.
+    cloudflare_ranges="$(curl -fsS https://www.cloudflare.com/ips-v4 || true) $(curl -fsS https://www.cloudflare.com/ips-v6 || true)"
+    if [[ -z "${cloudflare_ranges// /}" ]]; then
+        warn "Không tải được danh sách IP Cloudflare; tạm mở cổng 80 cho mọi IP. Chạy lại script sau để siết lại."
+        ufw allow 80/tcp >/dev/null
+    else
+        for cloudflare_range in $cloudflare_ranges; do
+            ufw allow proto tcp from "$cloudflare_range" to any port 80 >/dev/null
+        done
+        echo "Cổng 80 chỉ mở cho các dải IP Cloudflare."
+    fi
+else
+    ufw allow 80/tcp >/dev/null
+    ufw allow 443/tcp >/dev/null
+fi
 ufw --force enable >/dev/null
 ufw status
 
@@ -165,6 +194,13 @@ if curl -fsS "http://127.0.0.1:${app_port}/health"; then
 else
     warn "App chưa phản hồi. Xem log: journalctl -u login-tcp-api -n 50"
 fi
+if [[ "$SSL_MODE" == "flexible" ]]; then
+    if curl -fsS -H "Host: ${DOMAIN}" "http://127.0.0.1/health"; then
+        echo "  <- Caddy chuyển tiếp đúng tới app qua cổng 80"
+    else
+        warn "Caddy chưa phản hồi trên cổng 80. Xem log: journalctl -u caddy -n 50"
+    fi
+fi
 if nc -vz -w 5 "$target_host" "$target_port"; then
     echo "VPS kết nối được tới máy chủ TCP $target_host:$target_port."
 else
@@ -173,7 +209,8 @@ fi
 
 log "Xong"
 cat <<EOF
-- API công khai:   https://${DOMAIN}/api/login   (cần DNS A record trỏ về IP VPS)
+- API công khai:   POST https://${DOMAIN}/api/login/garena
+- Cloudflare:      SSL/TLS phải khớp SSL_MODE=${SSL_MODE} (flexible: chế độ Flexible và bản ghi DNS bật Proxied)
 - Log app:         journalctl -u login-tcp-api -f
-- Tunnel từ local: ssh -D 127.0.0.1:1080 -N ${TUNNEL_USER}@<IP VPS>
+- Tunnel từ local: ssh -D 127.0.0.1:1080 -N ${TUNNEL_USER}@<IP VPS>   (dùng IP, không dùng domain đi qua Cloudflare)
 EOF
