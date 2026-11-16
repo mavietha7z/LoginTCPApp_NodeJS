@@ -176,7 +176,7 @@ class LoginPrepareRequest extends BaseLoginRequest {
 
 /**
  * Request Login (command 257): gửi MD5 mật khẩu, đã mã hóa bằng khóa sinh từ salt/verify_code.
- * Tương ứng `LoginRequestHandler` trong Python (dòng 442–478); đổi tên vì đây là request, không phải handler.
+ * Tương ứng `LoginRequest` trong Python (dòng 442–478).
  */
 class LoginRequest extends BaseLoginRequest {
     /**

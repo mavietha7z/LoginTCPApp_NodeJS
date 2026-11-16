@@ -16,7 +16,7 @@ from flask import Flask, request, jsonify
 
 
 class BaseProtobufDecoder:
-    TAG_TO_FIELD = {
+    HEADER_FIELD_NAMES = {
         1: "version",
         2: "id",
         3: "command_type",
@@ -27,63 +27,63 @@ class BaseProtobufDecoder:
         8: "fragment_index"
     }
 
-    def parse_varint(self, data, offset):
+    def decode_varint(self, data, offset):
         shift = 0
         result = 0
         while True:
             if offset >= len(data):
                 raise Exception("Unexpected end of data while parsing varint")
-            b = data[offset]
-            result |= (b & 0x7F) << shift
+            current_byte = data[offset]
+            result |= (current_byte & 0x7F) << shift
             offset += 1
-            if not (b & 0x80):
+            if not (current_byte & 0x80):
                 break
             shift += 7
         return result, offset
 
-    def parse_length_delimited(self, data, offset):
-        length, offset = self.parse_varint(data, offset)
+    def decode_length_delimited(self, data, offset):
+        length, offset = self.decode_varint(data, offset)
         value = data[offset:offset + length]
         offset += length
         return value, offset
 
-    def parse_fixed64(self, data, offset):
+    def decode_fixed64(self, data, offset):
         value = data[offset:offset + 8]
         offset += 8
         return value, offset
 
-    def parse_fixed32(self, data, offset):
+    def decode_fixed32(self, data, offset):
         value = data[offset:offset + 4]
         offset += 4
         return value, offset
 
-    def decode_fields(self, protobuf_data):
+    def decode_protobuf_fields(self, protobuf_data):
         offset = 0
         fields = {}
         while offset < len(protobuf_data):
-            key, offset = self.parse_varint(protobuf_data, offset)
-            tag = key >> 3
-            wire_type = key & 0x07
+            field_key, offset = self.decode_varint(protobuf_data, offset)
+            field_number = field_key >> 3
+            wire_type = field_key & 0x07
             if wire_type == 0:
-                value, offset = self.parse_varint(protobuf_data, offset)
+                value, offset = self.decode_varint(protobuf_data, offset)
             elif wire_type == 1:
-                value, offset = self.parse_fixed64(protobuf_data, offset)
+                value, offset = self.decode_fixed64(protobuf_data, offset)
             elif wire_type == 2:
-                value, offset = self.parse_length_delimited(
+                value, offset = self.decode_length_delimited(
                     protobuf_data, offset)
             elif wire_type == 5:
-                value, offset = self.parse_fixed32(protobuf_data, offset)
+                value, offset = self.decode_fixed32(protobuf_data, offset)
             else:
                 raise Exception(
-                    f"Unsupported wire type: {wire_type} for tag: {tag}")
-            fields[tag] = (wire_type, value)
+                    f"Unsupported wire type: {wire_type} for tag: {field_number}")
+            fields[field_number] = (wire_type, value)
         return fields
 
-    def decode_client_packet_header(self, header_bytes):
-        fields = self.decode_fields(header_bytes)
+    def decode_packet_header(self, header_bytes):
+        fields = self.decode_protobuf_fields(header_bytes)
         header = {}
-        for tag, (wire_type, value) in fields.items():
-            field_name = self.TAG_TO_FIELD.get(tag, f"unknown_field_{tag}")
+        for field_number, (wire_type, value) in fields.items():
+            field_name = self.HEADER_FIELD_NAMES.get(field_number, f"unknown_field_{field_number}")
             if wire_type == 0:
                 header[field_name] = value
             elif wire_type in (1, 5):
@@ -95,18 +95,18 @@ class BaseProtobufDecoder:
         return header
 
 
-class PacketSend(BaseProtobufDecoder):
+class PacketBuilder(BaseProtobufDecoder):
     def encode_varint(self, value):
-        buf = bytearray()
+        encoded_bytes = bytearray()
         while True:
-            to_write = value & 0x7F
+            next_seven_bits = value & 0x7F
             value >>= 7
             if value:
-                buf.append(to_write | 0x80)
+                encoded_bytes.append(next_seven_bits | 0x80)
             else:
-                buf.append(to_write)
+                encoded_bytes.append(next_seven_bits)
                 break
-        return bytes(buf)
+        return bytes(encoded_bytes)
 
     def build_packet(self, header_bytes, body_bytes=None):
         if body_bytes is None:
@@ -118,248 +118,248 @@ class PacketSend(BaseProtobufDecoder):
         return framing + payload
 
 
-MASK32 = 0xffffffff
+UNSIGNED_32_BIT_MASK = 0xffffffff
 
 
 class Lrand48:
     def __init__(self, seed):
-        self.a = 0x5DEECE66D
-        self.c = 0xB
-        self.m = 1 << 48
+        self.multiplier = 0x5DEECE66D
+        self.increment = 0xB
+        self.modulus = 1 << 48
         self.state = ((seed & 0xffffffff) << 16) | 0x330E
 
-    def lrand48(self):
-        self.state = (self.state * self.a + self.c) & (self.m - 1)
+    def next_value(self):
+        self.state = (self.state * self.multiplier + self.increment) & (self.modulus - 1)
         return self.state >> 17
 
 
-class XTEACBC:
+class XteaCustom:
     BLOCK_SIZE = 8
     DELTA = 1640531527
 
     def __init__(self, key_bytes: bytes, endian: str = 'little'):
         if len(key_bytes) != 16:
             raise ValueError("Key must be 16 bytes!")
-        self.key = self._prepare_key(key_bytes, endian)
+        self.key_words = self._split_key_into_words(key_bytes, endian)
         self.key_bytes = key_bytes
         self.endian = endian
 
     @staticmethod
-    def _prepare_key(key_bytes: bytes, endian: str = 'little'):
-        return [int.from_bytes(key_bytes[i*4:(i+1)*4], endian) for i in range(4)]
+    def _split_key_into_words(key_bytes: bytes, endian: str = 'little'):
+        return [int.from_bytes(key_bytes[word_index*4:(word_index+1)*4], endian) for word_index in range(4)]
 
     @staticmethod
-    def _add32(a, b):
-        return (a + b) & MASK32
+    def _add_unsigned_32(first, second):
+        return (first + second) & UNSIGNED_32_BIT_MASK
 
     @staticmethod
-    def _sub32(a, b):
-        return (a - b) & MASK32
+    def _subtract_unsigned_32(first, second):
+        return (first - second) & UNSIGNED_32_BIT_MASK
 
     @staticmethod
-    def _xtea_decrypt_block_custom(v0: int, v1: int, key: list, rounds: int = 32, c: int = 1640531527):
-        s = (-957401312) & MASK32
-        for _ in range(rounds):
-            t = (v0 + ((16 * v0) ^ (v0 >> 5))) & MASK32
-            idx0 = ((s >> 9) & 0xC) >> 2
-            part0 = (s + key[idx0]) & MASK32
-            v1 = XTEACBC._sub32(v1, t ^ part0)
-            t2 = (v1 + ((16 * v1) ^ (v1 >> 5))) & MASK32
-            idx1 = (((s & 0xff) + 71) & 3)
-            part1 = (s + key[idx1] + c) & MASK32
-            v0 = XTEACBC._sub32(v0, t2 ^ part1)
-            s = XTEACBC._add32(s, c)
-        return v0, v1
+    def _decrypt_block(left, right, key_words: list, round_count: int = 32, round_delta: int = 1640531527):
+        round_sum = (-957401312) & UNSIGNED_32_BIT_MASK
+        for _ in range(round_count):
+            left_mix = (left + ((16 * left) ^ (left >> 5))) & UNSIGNED_32_BIT_MASK
+            first_key_index = ((round_sum >> 9) & 0xC) >> 2
+            first_key_part = (round_sum + key_words[first_key_index]) & UNSIGNED_32_BIT_MASK
+            right = XteaCustom._subtract_unsigned_32(right, left_mix ^ first_key_part)
+            right_mix = (right + ((16 * right) ^ (right >> 5))) & UNSIGNED_32_BIT_MASK
+            second_key_index = (((round_sum & 0xff) + 71) & 3)
+            second_key_part = (round_sum + key_words[second_key_index] + round_delta) & UNSIGNED_32_BIT_MASK
+            left = XteaCustom._subtract_unsigned_32(left, right_mix ^ second_key_part)
+            round_sum = XteaCustom._add_unsigned_32(round_sum, round_delta)
+        return left, right
 
     @staticmethod
-    def _bytes_to_block(b: bytes):
-        if len(b) != 8:
+    def _bytes_to_word_pair(block_bytes: bytes):
+        if len(block_bytes) != 8:
             raise ValueError("Block must be 8 bytes!")
-        w0 = int.from_bytes(b[0:4], 'little')
-        w1 = int.from_bytes(b[4:8], 'little')
-        return (w0, w1)
+        left_word = int.from_bytes(block_bytes[0:4], 'little')
+        right_word = int.from_bytes(block_bytes[4:8], 'little')
+        return (left_word, right_word)
 
     @staticmethod
     def remove_padding(data: bytes, block_size: int = 8):
         if not data:
             raise ValueError("Data is empty!")
-        pad = data[-1]
-        if pad < 1 or pad > block_size:
-            raise ValueError(f"Invalid padding value: {pad}")
-        if data[-pad:] != bytes([pad] * pad):
+        padding_length = data[-1]
+        if padding_length < 1 or padding_length > block_size:
+            raise ValueError(f"Invalid padding value: {padding_length}")
+        if data[-padding_length:] != bytes([padding_length] * padding_length):
             raise ValueError("Invalid padding!")
-        return data[:-pad]
+        return data[:-padding_length]
 
-    def crypt_xtea_cbc_decrypt(self, ciphertext: bytes, endian='little') -> bytes:
+    def decrypt(self, ciphertext: bytes, endian='little') -> bytes:
         if len(ciphertext) % self.BLOCK_SIZE != 0 or len(ciphertext) < self.BLOCK_SIZE:
             raise ValueError("Ciphertext length invalid!")
-        nblocks = len(ciphertext) // self.BLOCK_SIZE
-        blocks = [self._bytes_to_block(
-            ciphertext[i * self.BLOCK_SIZE:(i + 1) * self.BLOCK_SIZE]) for i in range(nblocks)]
-        iv = blocks[0]
+        block_count = len(ciphertext) // self.BLOCK_SIZE
+        blocks = [self._bytes_to_word_pair(
+            ciphertext[block_index * self.BLOCK_SIZE:(block_index + 1) * self.BLOCK_SIZE]) for block_index in range(block_count)]
+        initial_block = blocks[0]
         decrypted = b""
-        prev = iv
+        previous_block = initial_block
         for block in blocks[1:]:
-            v0, v1 = block
-            d0, d1 = self._xtea_decrypt_block_custom(
-                v0, v1, self.key, rounds=32, c=self.DELTA)
-            prev0, prev1 = prev
-            p0 = d0 ^ prev0
-            p1 = d1 ^ prev1
-            decrypted += p0.to_bytes(4, 'little') + p1.to_bytes(4, 'little')
-            prev = block
-        output_len = len(ciphertext) - 16
-        raw = decrypted[:output_len]
-        return self.remove_padding(raw, self.BLOCK_SIZE)
+            cipher_left, cipher_right = block
+            decrypted_left, decrypted_right = self._decrypt_block(
+                cipher_left, cipher_right, self.key_words, round_count=32, round_delta=self.DELTA)
+            previous_left, previous_right = previous_block
+            plain_left = decrypted_left ^ previous_left
+            plain_right = decrypted_right ^ previous_right
+            decrypted += plain_left.to_bytes(4, 'little') + plain_right.to_bytes(4, 'little')
+            previous_block = block
+        output_length = len(ciphertext) - 16
+        padded_data = decrypted[:output_length]
+        return self.remove_padding(padded_data, self.BLOCK_SIZE)
 
-    def crypt_xtea_cbc_encrypt(self, plaintext: bytes, iv: bytes = None) -> bytes:
-        v46 = len(plaintext)
-        full_blocks = v46 >> 3
-        v52 = 8 * full_blocks
-        v48 = full_blocks
-        out_size = v52 + 24
-        out_dwords = [0] * (out_size // 4)
-        if iv is not None:
-            if len(iv) != 8:
+    def encrypt(self, plaintext: bytes, initialization_vector: bytes = None) -> bytes:
+        plaintext_length = len(plaintext)
+        full_block_count = plaintext_length >> 3
+        full_blocks_byte_length = 8 * full_block_count
+        block_loop_count = full_block_count
+        output_size = full_blocks_byte_length + 24
+        output_words = [0] * (output_size // 4)
+        if initialization_vector is not None:
+            if len(initialization_vector) != 8:
                 raise ValueError("IV phải có độ dài 8 byte")
-            v4 = int.from_bytes(iv[0:4], 'little')
-            v5 = int.from_bytes(iv[4:8], 'little')
-            v6 = v4 | (v5 >> 31)
+            seed_left = int.from_bytes(initialization_vector[0:4], 'little')
+            cipher_left = int.from_bytes(initialization_vector[4:8], 'little')
+            cipher_right = seed_left | (cipher_left >> 31)
         else:
-            rng = Lrand48(int(time.time()))
-            v4 = rng.lrand48() & 0xffffffff
-            v5 = rng.lrand48() & 0xffffffff
-            v6 = v4 | (v5 >> 31)
-        v8 = 0
+            random_generator = Lrand48(int(time.time()))
+            seed_left = random_generator.next_value() & 0xffffffff
+            cipher_left = random_generator.next_value() & 0xffffffff
+            cipher_right = seed_left | (cipher_left >> 31)
+        round_sum = 0
         delta = 0x61C88647
-        rounds = 32
-        v49 = v6
-        v50 = v5
-        for _ in range(rounds):
-            temp1 = (v6 + ((16 * v6) ^ (v6 >> 5))) & 0xffffffff
-            k1 = int.from_bytes(
-                self.key_bytes[((v8 & 3) * 4):((v8 & 3) * 4 + 4)], 'little')
-            temp2 = (v8 + k1) & 0xffffffff
-            v5 = (v5 + (temp1 ^ temp2)) & 0xffffffff
-            temp1 = (v5 + ((16 * v5) ^ (v5 >> 5))) & 0xffffffff
-            second_index = (((v8 - delta) >> 9) & 0xC) >> 2
-            k2 = int.from_bytes(
-                self.key_bytes[(second_index * 4):(second_index * 4 + 4)], 'little')
-            temp2 = (v8 + k2) & 0xffffffff
-            temp2 = (temp2 - delta) & 0xffffffff
-            v6 = (v6 + (temp1 ^ temp2)) & 0xffffffff
-            v8 = (v8 - delta) & 0xffffffff
-        out_dwords[0] = v5
-        out_dwords[1] = v6
-        pos = 0
-        out_index = 2
-        for i in range(v48):
-            p0 = int.from_bytes(plaintext[pos:pos+4], 'little')
-            p1 = int.from_bytes(plaintext[pos+4:pos+8], 'little')
-            pos += 8
-            combined = ((p1 & 0xffffffff) << 32) | (p0 & 0xffffffff)
-            old_pair = ((v49 & 0xffffffff) << 32) | (v50 & 0xffffffff)
-            total = (combined + old_pair) & 0xffffffffffffffff
-            v49 = (total >> 32) & 0xffffffff
-            v50 = (v50 + p0) & 0xffffffff
-            v6 = v6 ^ p1
-            v16 = p0 ^ v5
-            v17 = 0
-            for j in range(32):
-                temp1 = (v6 + ((16 * v6) ^ (v6 >> 5))) & 0xffffffff
-                k1 = int.from_bytes(
-                    self.key_bytes[((v17 & 3) * 4):((v17 & 3) * 4 + 4)], 'little')
-                temp2 = (v17 + k1) & 0xffffffff
-                v16 = (v16 + (temp1 ^ temp2)) & 0xffffffff
-                temp1 = (v16 + ((16 * v16) ^ (v16 >> 5))) & 0xffffffff
-                second_index = (((v17 - delta) >> 9) & 0xC) >> 2
-                k2 = int.from_bytes(
-                    self.key_bytes[(second_index * 4):(second_index * 4 + 4)], 'little')
-                temp2 = (v17 + k2) & 0xffffffff
-                temp2 = (temp2 - delta) & 0xffffffff
-                v6 = (v6 + (temp1 ^ temp2)) & 0xffffffff
-                v17 = (v17 - delta) & 0xffffffff
-            v5 = v16
-            out_dwords[out_index] = v16
-            out_dwords[out_index + 1] = v6
-            out_index += 2
-            remainder = v46 & 7
+        round_count = 32
+        rolling_high = cipher_right
+        rolling_low = cipher_left
+        for _ in range(round_count):
+            mix_value = (cipher_right + ((16 * cipher_right) ^ (cipher_right >> 5))) & 0xffffffff
+            first_key_word = int.from_bytes(
+                self.key_bytes[((round_sum & 3) * 4):((round_sum & 3) * 4 + 4)], 'little')
+            key_value = (round_sum + first_key_word) & 0xffffffff
+            cipher_left = (cipher_left + (mix_value ^ key_value)) & 0xffffffff
+            mix_value = (cipher_left + ((16 * cipher_left) ^ (cipher_left >> 5))) & 0xffffffff
+            second_key_index = (((round_sum - delta) >> 9) & 0xC) >> 2
+            second_key_word = int.from_bytes(
+                self.key_bytes[(second_key_index * 4):(second_key_index * 4 + 4)], 'little')
+            key_value = (round_sum + second_key_word) & 0xffffffff
+            key_value = (key_value - delta) & 0xffffffff
+            cipher_right = (cipher_right + (mix_value ^ key_value)) & 0xffffffff
+            round_sum = (round_sum - delta) & 0xffffffff
+        output_words[0] = cipher_left
+        output_words[1] = cipher_right
+        input_offset = 0
+        output_index = 2
+        for block_index in range(block_loop_count):
+            plain_left = int.from_bytes(plaintext[input_offset:input_offset+4], 'little')
+            plain_right = int.from_bytes(plaintext[input_offset+4:input_offset+8], 'little')
+            input_offset += 8
+            plain_pair = ((plain_right & 0xffffffff) << 32) | (plain_left & 0xffffffff)
+            rolling_pair = ((rolling_high & 0xffffffff) << 32) | (rolling_low & 0xffffffff)
+            rolling_sum = (plain_pair + rolling_pair) & 0xffffffffffffffff
+            rolling_high = (rolling_sum >> 32) & 0xffffffff
+            rolling_low = (rolling_low + plain_left) & 0xffffffff
+            cipher_right = cipher_right ^ plain_right
+            block_left = plain_left ^ cipher_left
+            block_round_sum = 0
+            for round_index in range(32):
+                mix_value = (cipher_right + ((16 * cipher_right) ^ (cipher_right >> 5))) & 0xffffffff
+                first_key_word = int.from_bytes(
+                    self.key_bytes[((block_round_sum & 3) * 4):((block_round_sum & 3) * 4 + 4)], 'little')
+                key_value = (block_round_sum + first_key_word) & 0xffffffff
+                block_left = (block_left + (mix_value ^ key_value)) & 0xffffffff
+                mix_value = (block_left + ((16 * block_left) ^ (block_left >> 5))) & 0xffffffff
+                second_key_index = (((block_round_sum - delta) >> 9) & 0xC) >> 2
+                second_key_word = int.from_bytes(
+                    self.key_bytes[(second_key_index * 4):(second_key_index * 4 + 4)], 'little')
+                key_value = (block_round_sum + second_key_word) & 0xffffffff
+                key_value = (key_value - delta) & 0xffffffff
+                cipher_right = (cipher_right + (mix_value ^ key_value)) & 0xffffffff
+                block_round_sum = (block_round_sum - delta) & 0xffffffff
+            cipher_left = block_left
+            output_words[output_index] = block_left
+            output_words[output_index + 1] = cipher_right
+            output_index += 2
+            remainder = plaintext_length & 7
             if remainder > 0:
-                leftover = plaintext[pos:pos+remainder]
+                tail_bytes = plaintext[input_offset:input_offset+remainder]
             else:
-                leftover = b""
-        tmp = self.custom_pad_c_style(leftover)
-        v53 = int.from_bytes(tmp, 'little')
-        v26 = (v53 & 0xffffffff) ^ v5
-        v27 = ((v53 >> 32) & 0xffffffff) ^ v6
-        v28 = 0
-        for i in range(32):
-            temp1 = (v27 + ((16 * v27) ^ (v27 >> 5))) & 0xffffffff
-            k1 = int.from_bytes(
-                self.key_bytes[((v28 & 3) * 4):((v28 & 3) * 4 + 4)], 'little')
-            temp2 = (v28 + k1) & 0xffffffff
-            v26 = (v26 + (temp1 ^ temp2)) & 0xffffffff
-            temp1 = (v26 + ((16 * v26) ^ (v26 >> 5))) & 0xffffffff
-            second_index = (((v28 - delta) >> 9) & 0xC) >> 2
-            k2 = int.from_bytes(
-                self.key_bytes[(second_index * 4):(second_index * 4 + 4)], 'little')
-            temp2 = (v28 + k2) & 0xffffffff
-            temp2 = (temp2 - delta) & 0xffffffff
-            v27 = (v27 + (temp1 ^ temp2)) & 0xffffffff
-            v28 = (v28 - delta) & 0xffffffff
-        out_dwords[out_index] = v26
-        out_dwords[out_index + 1] = v27
-        out_index += 2
-        combined_pair = ((v49 & 0xffffffff) << 32) | (v50 & 0xffffffff)
-        total_64 = (combined_pair + v53) & 0xffffffffffffffff
-        v30 = (total_64 >> 32) & 0xffffffff
-        v31 = (v50 + (v53 & 0xffffffff)) & 0xffffffff
-        v32 = v26 ^ v31
-        v33 = v27 ^ v30
-        v34 = 0
-        for i in range(32):
-            temp1 = (v33 + ((16 * v33) ^ (v33 >> 5))) & 0xffffffff
-            k1 = int.from_bytes(
-                self.key_bytes[((v34 & 3) * 4):((v34 & 3) * 4 + 4)], 'little')
-            temp2 = (v34 + k1) & 0xffffffff
-            v32 = (v32 + (temp1 ^ temp2)) & 0xffffffff
-            temp1 = (v32 + ((16 * v32) ^ (v32 >> 5))) & 0xffffffff
-            second_index = (((v34 - delta) >> 9) & 0xC) >> 2
-            k2 = int.from_bytes(
-                self.key_bytes[(second_index * 4):(second_index * 4 + 4)], 'little')
-            temp2 = (v34 + k2) & 0xffffffff
-            temp2 = (temp2 - delta) & 0xffffffff
-            v33 = (v33 + (temp1 ^ temp2)) & 0xffffffff
-            v34 = (v34 - delta) & 0xffffffff
-        out_dwords[out_index] = v32
-        out_dwords[out_index + 1] = v33
-        out_index += 2
-        result = b"".join(dw.to_bytes(4, 'little') for dw in out_dwords)
+                tail_bytes = b""
+        padding_block = self.build_padding_block(tail_bytes)
+        padding_value = int.from_bytes(padding_block, 'little')
+        padding_cipher_left = (padding_value & 0xffffffff) ^ cipher_left
+        padding_cipher_right = ((padding_value >> 32) & 0xffffffff) ^ cipher_right
+        padding_round_sum = 0
+        for round_index in range(32):
+            mix_value = (padding_cipher_right + ((16 * padding_cipher_right) ^ (padding_cipher_right >> 5))) & 0xffffffff
+            first_key_word = int.from_bytes(
+                self.key_bytes[((padding_round_sum & 3) * 4):((padding_round_sum & 3) * 4 + 4)], 'little')
+            key_value = (padding_round_sum + first_key_word) & 0xffffffff
+            padding_cipher_left = (padding_cipher_left + (mix_value ^ key_value)) & 0xffffffff
+            mix_value = (padding_cipher_left + ((16 * padding_cipher_left) ^ (padding_cipher_left >> 5))) & 0xffffffff
+            second_key_index = (((padding_round_sum - delta) >> 9) & 0xC) >> 2
+            second_key_word = int.from_bytes(
+                self.key_bytes[(second_key_index * 4):(second_key_index * 4 + 4)], 'little')
+            key_value = (padding_round_sum + second_key_word) & 0xffffffff
+            key_value = (key_value - delta) & 0xffffffff
+            padding_cipher_right = (padding_cipher_right + (mix_value ^ key_value)) & 0xffffffff
+            padding_round_sum = (padding_round_sum - delta) & 0xffffffff
+        output_words[output_index] = padding_cipher_left
+        output_words[output_index + 1] = padding_cipher_right
+        output_index += 2
+        final_rolling_pair = ((rolling_high & 0xffffffff) << 32) | (rolling_low & 0xffffffff)
+        final_rolling_sum = (final_rolling_pair + padding_value) & 0xffffffffffffffff
+        checksum_high = (final_rolling_sum >> 32) & 0xffffffff
+        checksum_low = (rolling_low + (padding_value & 0xffffffff)) & 0xffffffff
+        checksum_cipher_left = padding_cipher_left ^ checksum_low
+        checksum_cipher_right = padding_cipher_right ^ checksum_high
+        checksum_round_sum = 0
+        for round_index in range(32):
+            mix_value = (checksum_cipher_right + ((16 * checksum_cipher_right) ^ (checksum_cipher_right >> 5))) & 0xffffffff
+            first_key_word = int.from_bytes(
+                self.key_bytes[((checksum_round_sum & 3) * 4):((checksum_round_sum & 3) * 4 + 4)], 'little')
+            key_value = (checksum_round_sum + first_key_word) & 0xffffffff
+            checksum_cipher_left = (checksum_cipher_left + (mix_value ^ key_value)) & 0xffffffff
+            mix_value = (checksum_cipher_left + ((16 * checksum_cipher_left) ^ (checksum_cipher_left >> 5))) & 0xffffffff
+            second_key_index = (((checksum_round_sum - delta) >> 9) & 0xC) >> 2
+            second_key_word = int.from_bytes(
+                self.key_bytes[(second_key_index * 4):(second_key_index * 4 + 4)], 'little')
+            key_value = (checksum_round_sum + second_key_word) & 0xffffffff
+            key_value = (key_value - delta) & 0xffffffff
+            checksum_cipher_right = (checksum_cipher_right + (mix_value ^ key_value)) & 0xffffffff
+            checksum_round_sum = (checksum_round_sum - delta) & 0xffffffff
+        output_words[output_index] = checksum_cipher_left
+        output_words[output_index + 1] = checksum_cipher_right
+        output_index += 2
+        result = b"".join(word.to_bytes(4, 'little') for word in output_words)
         return result
 
-    def custom_pad_c_style(self, plaintext: bytes) -> bytes:
+    def build_padding_block(self, plaintext: bytes) -> bytes:
         length = len(plaintext)
-        rem = length & 7
+        remainder = length & 7
         padded_block = bytearray(8)
-        if rem != 0:
-            padded_block[:rem] = plaintext[-rem:]
-        pad_val = 8 - rem
-        for i in range(pad_val):
-            padded_block[rem + i] = pad_val
+        if remainder != 0:
+            padded_block[:remainder] = plaintext[-remainder:]
+        padding_length = 8 - remainder
+        for padding_index in range(padding_length):
+            padded_block[remainder + padding_index] = padding_length
         return padded_block
 
 
-class ProtoUtils:
+class ProtobufEncoder:
     @staticmethod
     def encode_varint(value):
         result = bytearray()
         while True:
-            to_write = value & 0x7F
+            next_seven_bits = value & 0x7F
             value >>= 7
             if value:
-                result.append(to_write | 0x80)
+                result.append(next_seven_bits | 0x80)
             else:
-                result.append(to_write)
+                result.append(next_seven_bits)
                 break
         return bytes(result)
 
@@ -373,46 +373,46 @@ class BaseLoginRequest:
         self.random_key = os.urandom(16)
         self.timestamp = int(time.time())
 
-    def build_header(self, type_field):
+    def build_header(self, command):
         header_fields = {
             1: 285212918,
             2: hash(uuid.getnode()),
             3: 2,
-            4: type_field,
+            4: command,
             6: int(time.time()),
         }
         message = b""
-        for tag, value in header_fields.items():
-            key = ProtoUtils.encode_varint((tag << 3) | 0)
-            message += key + ProtoUtils.encode_varint(value)
+        for field_number, value in header_fields.items():
+            field_key = ProtobufEncoder.encode_varint((field_number << 3) | 0)
+            message += field_key + ProtobufEncoder.encode_varint(value)
         return message
 
     def encrypt_data(self, data_bytes):
-        xtea = XTEACBC(self.random_key)
-        return xtea.crypt_xtea_cbc_encrypt(data_bytes)
+        cipher = XteaCustom(self.random_key)
+        return cipher.encrypt(data_bytes)
 
-    def build_encrypted_body(self, key_bytes, data_bytes, key_tag=1, data_tag=2):
+    def build_encrypted_body(self, key_bytes, data_bytes, key_field_number=1, data_field_number=2):
         message = b""
-        message += ProtoUtils.encode_varint((key_tag << 3) | 2) + \
-            ProtoUtils.encode_length_delimited(key_bytes)
-        message += ProtoUtils.encode_varint((data_tag << 3) | 2) + \
-            ProtoUtils.encode_length_delimited(data_bytes)
+        message += ProtobufEncoder.encode_varint((key_field_number << 3) | 2) + \
+            ProtobufEncoder.encode_length_delimited(key_bytes)
+        message += ProtobufEncoder.encode_varint((data_field_number << 3) | 2) + \
+            ProtobufEncoder.encode_length_delimited(data_bytes)
         return message
 
-    def build_full_packet(self, request_data_builder, header_type):
+    def build_full_packet(self, request_data_builder, command):
         data_bytes = request_data_builder()
         ciphertext = self.encrypt_data(data_bytes)
         body = self.build_encrypted_body(self.random_key, ciphertext)
-        header = self.build_header(header_type)
-        ps = PacketSend()
-        return ps.build_packet(header, body)
+        header = self.build_header(command)
+        packet_builder = PacketBuilder()
+        return packet_builder.build_packet(header, body)
 
 
 class LoginPrepareRequest(BaseLoginRequest):
     def __init__(self, account):
         super().__init__()
         self.account = account
-        self.auth_type = 0
+        self.authentication_type = 0
         self.account_type = 2 if re.match(
             r"[^@]+@[^@]+\.[^@]+", account) else 1
         self.client_type = 4352
@@ -420,29 +420,29 @@ class LoginPrepareRequest(BaseLoginRequest):
 
     def build_request_data(self):
         message = b""
-        message += ProtoUtils.encode_varint((1 << 3) | 0) + \
-            ProtoUtils.encode_varint(self.auth_type)
-        message += ProtoUtils.encode_varint((2 << 3) | 0) + \
-            ProtoUtils.encode_varint(self.account_type)
+        message += ProtobufEncoder.encode_varint((1 << 3) | 0) + \
+            ProtobufEncoder.encode_varint(self.authentication_type)
+        message += ProtobufEncoder.encode_varint((2 << 3) | 0) + \
+            ProtobufEncoder.encode_varint(self.account_type)
 
         account_bytes = self.account.encode('utf-8')
-        message += ProtoUtils.encode_varint((3 << 3) | 2) + \
-            ProtoUtils.encode_length_delimited(account_bytes)
+        message += ProtobufEncoder.encode_varint((3 << 3) | 2) + \
+            ProtobufEncoder.encode_length_delimited(account_bytes)
 
-        message += ProtoUtils.encode_varint((4 << 3) | 0) + \
-            ProtoUtils.encode_varint(self.client_type)
-        message += ProtoUtils.encode_varint((5 << 3) | 0) + \
-            ProtoUtils.encode_varint(self.client_version)
+        message += ProtobufEncoder.encode_varint((4 << 3) | 0) + \
+            ProtobufEncoder.encode_varint(self.client_type)
+        message += ProtobufEncoder.encode_varint((5 << 3) | 0) + \
+            ProtobufEncoder.encode_varint(self.client_version)
         return message
 
     def build_full_packet(self):
-        return super().build_full_packet(self.build_request_data, header_type=256)
+        return super().build_full_packet(self.build_request_data, command=256)
 
 
-class LoginRequestHandler(BaseLoginRequest):
-    def __init__(self, password=None, key=None):
-        self.random_key = bytes.fromhex(key)
-        self.device_id = str(hash(uuid.getnode())).encode('utf-8')
+class LoginRequest(BaseLoginRequest):
+    def __init__(self, password=None, encryption_key_hex=None):
+        self.random_key = bytes.fromhex(encryption_key_hex)
+        self.device_identifier = str(hash(uuid.getnode())).encode('utf-8')
         self.login_mode = 0
         self.password_hash = hashlib.md5(password.encode(
             'utf-8')).hexdigest().encode('utf-8') if password else None
@@ -451,31 +451,31 @@ class LoginRequestHandler(BaseLoginRequest):
 
     def build_request_data(self):
         message = b""
-        message += ProtoUtils.encode_varint((1 << 3) | 2) + \
-            ProtoUtils.encode_length_delimited(self.password_hash)
-        message += ProtoUtils.encode_varint((2 << 3) | 0) + \
-            ProtoUtils.encode_varint(self.login_mode)
-        user_status_msg = self.build_user_status_message()
-        message += ProtoUtils.encode_varint((3 << 3) | 2) + \
-            ProtoUtils.encode_length_delimited(user_status_msg)
-        message += ProtoUtils.encode_varint((4 << 3) | 2) + \
-            ProtoUtils.encode_length_delimited(self.device_id)
+        message += ProtobufEncoder.encode_varint((1 << 3) | 2) + \
+            ProtobufEncoder.encode_length_delimited(self.password_hash)
+        message += ProtobufEncoder.encode_varint((2 << 3) | 0) + \
+            ProtobufEncoder.encode_varint(self.login_mode)
+        user_status_message = self.build_user_status_message()
+        message += ProtobufEncoder.encode_varint((3 << 3) | 2) + \
+            ProtobufEncoder.encode_length_delimited(user_status_message)
+        message += ProtobufEncoder.encode_varint((4 << 3) | 2) + \
+            ProtobufEncoder.encode_length_delimited(self.device_identifier)
         return message
 
     def build_user_status_message(self):
         message = b""
-        message += ProtoUtils.encode_varint((2 << 3) | 0) + \
-            ProtoUtils.encode_varint(self.user_status)
+        message += ProtobufEncoder.encode_varint((2 << 3) | 0) + \
+            ProtobufEncoder.encode_varint(self.user_status)
         return message
 
     def build_full_packet(self):
         data_bytes = self.build_request_data()
         ciphertext = self.encrypt_data(data_bytes)
         header = self.build_header(257)
-        body = ProtoUtils.encode_varint(
-            (1 << 3) | 2) + ProtoUtils.encode_length_delimited(ciphertext)
-        ps = PacketSend()
-        return ps.build_packet(header, body)
+        body = ProtobufEncoder.encode_varint(
+            (1 << 3) | 2) + ProtobufEncoder.encode_length_delimited(ciphertext)
+        packet_builder = PacketBuilder()
+        return packet_builder.build_packet(header, body)
 
 
 class EmptyPacket(BaseLoginRequest):
@@ -492,8 +492,8 @@ class EmptyPacket(BaseLoginRequest):
         header_length = len(header)
         header_length_bytes = header_length.to_bytes(2, byteorder='big')
         packet_plaintext = header_length_bytes + header + self.build_request_data()
-        xtea = XTEACBC(self.encryption_key)
-        ciphertext = xtea.crypt_xtea_cbc_encrypt(packet_plaintext)
+        cipher = XteaCustom(self.encryption_key)
+        ciphertext = cipher.encrypt(packet_plaintext)
         payload_length = len(ciphertext)
         framing = payload_length.to_bytes(4, byteorder='little')
         return framing + ciphertext
@@ -506,8 +506,8 @@ class LoginTokenGetRequest(BaseLoginRequest):
 
     def build_request_data(self):
         message = b""
-        message += ProtoUtils.encode_varint((1 << 3)
-                                            | 0) + ProtoUtils.encode_varint(1)
+        message += ProtobufEncoder.encode_varint((1 << 3)
+                                                 | 0) + ProtobufEncoder.encode_varint(1)
         return message
 
     def build_full_packet(self):
@@ -516,14 +516,14 @@ class LoginTokenGetRequest(BaseLoginRequest):
         header_length_bytes = header_length.to_bytes(2, byteorder='big')
         body = self.build_request_data()
         packet_plaintext = header_length_bytes + header + body
-        xtea = XTEACBC(self.encryption_key)
-        ciphertext = xtea.crypt_xtea_cbc_encrypt(packet_plaintext)
+        cipher = XteaCustom(self.encryption_key)
+        ciphertext = cipher.encrypt(packet_plaintext)
         payload_length = len(ciphertext)
         framing = payload_length.to_bytes(4, byteorder='little')
         return framing + ciphertext
 
 
-class SystemError:
+class SystemErrorCode:
     ERROR_CODES = {
         0: "SUCCESS",
         1: "ERROR_UNKNOWN",
@@ -617,7 +617,7 @@ class SystemResponse:
     def __init__(self, header, body):
         self.header = header
         self.body = body
-        self.result = SystemError(header.get("result", -1))
+        self.result = SystemErrorCode(header.get("result", -1))
 
     @classmethod
     def from_packet(cls, packet):
@@ -631,7 +631,7 @@ class SystemResponse:
 
 class PacketReceiver(BaseProtobufDecoder):
     def decode_login_prepare_reply(self, body_bytes):
-        fields = self.decode_fields(body_bytes)
+        fields = self.decode_protobuf_fields(body_bytes)
         reply = {}
         if 1 in fields:
             reply["encrypt_key"] = fields[1][1].hex()
@@ -640,40 +640,40 @@ class PacketReceiver(BaseProtobufDecoder):
         return reply
 
     def decode_login_reply(self, body_bytes):
-        fields = self.decode_fields(body_bytes)
+        fields = self.decode_protobuf_fields(body_bytes)
         reply = {}
         if 1 in fields:
             reply["data"] = fields[1][1].hex()
         return reply
 
     def decode_sso_key_get_reply(self, body_bytes):
-        fields = self.decode_fields(body_bytes)
+        fields = self.decode_protobuf_fields(body_bytes)
         sso_key = None
         if 1 in fields:
-            wire_type, raw_val = fields[1]
+            wire_type, raw_value = fields[1]
             if wire_type == 2:
                 try:
-                    sso_key = raw_val.decode('utf-8')
+                    sso_key = raw_value.decode('utf-8')
                 except Exception:
-                    sso_key = raw_val.hex()
+                    sso_key = raw_value.hex()
         return {"sso_key": sso_key}
 
     def decode_login_prepare_reply_data(self, data):
-        fields = self.decode_fields(data)
+        fields = self.decode_protobuf_fields(data)
         salt = fields.get(1, (None, b""))[1]
         verify_code = fields.get(2, (None, b""))[1]
         try:
-            salt_str = salt.decode('utf-8')
+            salt_text = salt.decode('utf-8')
         except Exception:
-            salt_str = salt.hex()
+            salt_text = salt.hex()
         try:
-            verify_code_str = verify_code.decode('utf-8')
+            verify_code_text = verify_code.decode('utf-8')
         except Exception:
-            verify_code_str = verify_code
-        return {"salt": salt_str, "verify_code": verify_code_str}
+            verify_code_text = verify_code
+        return {"salt": salt_text, "verify_code": verify_code_text}
 
     def decode_login_reply_data(self, data):
-        fields = self.decode_fields(data)
+        fields = self.decode_protobuf_fields(data)
         reply = {}
         if 1 in fields:
             reply["uid"] = fields[1][1]
@@ -681,16 +681,16 @@ class PacketReceiver(BaseProtobufDecoder):
             reply["session_key"] = fields[2][1].hex()
         return reply
 
-    def decode_login_prepare_reply_proto(self, encrypt_key_hex, data_hex):
+    def decrypt_login_prepare_reply_data(self, encrypt_key_hex, data_hex):
         data_bytes = bytes.fromhex(data_hex)
-        xtea = XTEACBC(bytes.fromhex(encrypt_key_hex))
-        decrypted = xtea.crypt_xtea_cbc_decrypt(data_bytes)
+        cipher = XteaCustom(bytes.fromhex(encrypt_key_hex))
+        decrypted = cipher.decrypt(data_bytes)
         return self.decode_login_prepare_reply_data(decrypted)
 
-    def decode_login_reply_proto(self, encrypt_key_hex, data_hex):
+    def decrypt_login_reply_data(self, encrypt_key_hex, data_hex):
         data_bytes = bytes.fromhex(data_hex)
-        xtea = XTEACBC(bytes.fromhex(encrypt_key_hex))
-        decrypted = xtea.crypt_xtea_cbc_decrypt(data_bytes)
+        cipher = XteaCustom(bytes.fromhex(encrypt_key_hex))
+        decrypted = cipher.decrypt(data_bytes)
         return self.decode_login_reply_data(decrypted)
 
     def decode_packet(self, framing_hex, payload_hex, encryption_key_hex=None):
@@ -706,193 +706,193 @@ class PacketReceiver(BaseProtobufDecoder):
         if header_length > (payload_length - 2):
             ciphertext = payload_bytes
             if encryption_key_hex:
-                xtea = XTEACBC(bytes.fromhex(encryption_key_hex))
-                decrypted = xtea.crypt_xtea_cbc_decrypt(ciphertext)
+                cipher = XteaCustom(bytes.fromhex(encryption_key_hex))
+                decrypted = cipher.decrypt(ciphertext)
                 if len(decrypted) < 2:
-                    header_decoded = {}
+                    decoded_header = {}
                     body_bytes = b""
                 else:
-                    dec_header_length = int.from_bytes(
+                    decrypted_header_length = int.from_bytes(
                         decrypted[:2], byteorder='big')
-                    header_bytes = decrypted[2:2+dec_header_length]
-                    body_bytes = decrypted[2+dec_header_length:]
-                    header_decoded = self.decode_client_packet_header(
+                    header_bytes = decrypted[2:2+decrypted_header_length]
+                    body_bytes = decrypted[2+decrypted_header_length:]
+                    decoded_header = self.decode_packet_header(
                         header_bytes)
             else:
-                header_decoded = {}
+                decoded_header = {}
                 body_bytes = b""
         else:
             header_bytes = payload_bytes[2: 2 + header_length]
             body_bytes = payload_bytes[2 + header_length:]
-            header_decoded = self.decode_client_packet_header(header_bytes)
+            decoded_header = self.decode_packet_header(header_bytes)
 
-        cmd_type = header_decoded.get("command_type")
-        cmd = header_decoded.get("command")
+        command_type = decoded_header.get("command_type")
+        command = decoded_header.get("command")
         message_type = "UNKNOWN"
-        body_decoded = {}
+        decoded_body = {}
 
         if body_bytes:
-            if cmd_type == 3 and cmd == 256:
+            if command_type == 3 and command == 256:
                 message_type = "LoginPrepareReply"
-                body_decoded = self.decode_login_prepare_reply(body_bytes)
-            elif cmd_type == 3 and (cmd == 257 or cmd == 259):
+                decoded_body = self.decode_login_prepare_reply(body_bytes)
+            elif command_type == 3 and (command == 257 or command == 259):
                 message_type = "LoginReply"
-                body_decoded = self.decode_login_reply(body_bytes)
-            elif (cmd_type == 3 or cmd_type == 4) and cmd in [274, 294, 442]:
+                decoded_body = self.decode_login_reply(body_bytes)
+            elif (command_type == 3 or command_type == 4) and command in [274, 294, 442]:
                 message_type = "SsoKeyGetReply"
-                body_decoded = self.decode_sso_key_get_reply(body_bytes)
+                decoded_body = self.decode_sso_key_get_reply(body_bytes)
 
         return {
-            "header": header_decoded,
+            "header": decoded_header,
             "message_type": message_type,
-            "body": body_decoded
+            "body": decoded_body
         }
 
 
 class EncryptionKeyGenerator:
-    def __init__(self, password: str, salt: str, third_param: str):
+    def __init__(self, password: str, salt: str, verify_code: str):
         self.password = password
         self.salt = salt
-        self.third_param = third_param
+        self.verify_code = verify_code
 
-    def md5_hash(self, s: str) -> str:
-        return hashlib.md5(s.encode()).hexdigest()
+    def md5_hash(self, text: str) -> str:
+        return hashlib.md5(text.encode()).hexdigest()
 
-    def sha256_digest(self, s: str) -> bytes:
-        return hashlib.sha256(s.encode()).digest()
+    def sha256_digest(self, text: str) -> bytes:
+        return hashlib.sha256(text.encode()).digest()
 
     def generate(self) -> bytes:
-        md5_pass = self.md5_hash(self.password)
-        digest_step2 = self.sha256_digest(md5_pass + self.salt)
-        hex_step2 = digest_step2.hex()
-        final_digest = self.sha256_digest(hex_step2 + self.third_param)
+        password_digest = self.md5_hash(self.password)
+        salted_digest = self.sha256_digest(password_digest + self.salt)
+        salted_digest_hex = salted_digest.hex()
+        final_digest = self.sha256_digest(salted_digest_hex + self.verify_code)
         return final_digest[:16]
 
 
-class TCPClient:
+class TcpClient:
     def __init__(self, server_ip="103.247.205.15", server_port=19000, proxy_url=None):
         self.server_ip = server_ip
         self.server_port = server_port
         self.proxy_url = proxy_url
-        self.sock = None
+        self.connection_socket = None
 
     def connect(self):
         if not self.proxy_url:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.connect((self.server_ip, self.server_port))
-            self.sock = s
+            connection_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            connection_socket.connect((self.server_ip, self.server_port))
+            self.connection_socket = connection_socket
             return
 
-        p = urlparse(self.proxy_url)
-        scheme = p.scheme.lower()
-        proxy_host = p.hostname
-        proxy_port = p.port or 1080
-        proxy_user = p.username
-        proxy_pass = p.password
-        rdns = scheme.endswith('h')
+        proxy = urlparse(self.proxy_url)
+        scheme = proxy.scheme.lower()
+        proxy_host = proxy.hostname
+        proxy_port = proxy.port or 1080
+        proxy_username = proxy.username
+        proxy_password = proxy.password
+        resolve_dns_remotely = scheme.endswith('h')
 
-        s = socks.socksocket()
-        s.set_proxy(
+        connection_socket = socks.socksocket()
+        connection_socket.set_proxy(
             proxy_type=socks.SOCKS5,
             addr=proxy_host,
             port=proxy_port,
-            rdns=rdns,
-            username=proxy_user,
-            password=proxy_pass
+            rdns=resolve_dns_remotely,
+            username=proxy_username,
+            password=proxy_password
         )
-        s.connect((self.server_ip, self.server_port))
-        self.sock = s
+        connection_socket.connect((self.server_ip, self.server_port))
+        self.connection_socket = connection_socket
 
     def close(self):
-        if self.sock:
-            self.sock.close()
-            self.sock = None
+        if self.connection_socket:
+            self.connection_socket.close()
+            self.connection_socket = None
 
     def send_message(self, message):
         responses = []
         try:
-            if not self.sock:
+            if not self.connection_socket:
                 return responses
-            self.sock.sendall(message)
-            header = self.sock.recv(4)
-            if not header:
+            self.connection_socket.sendall(message)
+            frame_header = self.connection_socket.recv(4)
+            if not frame_header:
                 return responses
-            length = struct.unpack("<I", header)[0]
-            payload = self.recv_all(length)
-            responses.extend([header, payload])
+            length = struct.unpack("<I", frame_header)[0]
+            payload = self.receive_exactly(length)
+            responses.extend([frame_header, payload])
         except Exception:
             pass
         return responses
 
-    def recv_all(self, length):
+    def receive_exactly(self, length):
         data = b""
         while len(data) < length:
-            more = self.sock.recv(length - len(data))
-            if not more:
+            chunk = self.connection_socket.recv(length - len(data))
+            if not chunk:
                 raise EOFError("Socket closed prematurely")
-            data += more
+            data += chunk
         return data
 
 
-def login_and_get_keys(account, password, proxy=None, max_retries=3):
+def login_and_get_keys(account, password, proxy=None, maximum_retries=3):
     start_time = time.time()
     last_error_code = -5999
 
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, maximum_retries + 1):
         tcp_client = None
         try:
-            tcp_client = TCPClient(proxy_url=proxy)
-            pd = PacketReceiver()
+            tcp_client = TcpClient(proxy_url=proxy)
+            packet_receiver = PacketReceiver()
             tcp_client.connect()
-            prep = None
-            resp = tcp_client.send_message(
+            login_prepare_response = None
+            response_frames = tcp_client.send_message(
                 LoginPrepareRequest(account)
                 .build_full_packet()
             )
-            if len(resp) < 2:
+            if len(response_frames) < 2:
                 last_error_code = -1
                 break
 
-            prep = SystemResponse.from_packet(
-                pd.decode_packet(resp[0].hex(), resp[1].hex())
+            login_prepare_response = SystemResponse.from_packet(
+                packet_receiver.decode_packet(response_frames[0].hex(), response_frames[1].hex())
             )
-            if not prep or prep.result.code == 105 or last_error_code == -1:
+            if not login_prepare_response or login_prepare_response.result.code == 105 or last_error_code == -1:
                 tcp_client.close()
                 continue
-            if not prep.is_success():
-                last_error_code = prep.result.code
+            if not login_prepare_response.is_success():
+                last_error_code = login_prepare_response.result.code
                 if last_error_code not in [-1, -2, -3, -6, 110]:
                     return {
                         "code": last_error_code,
                         "duration": round(time.time() - start_time, 2),
-                        "msg": prep.result.message,
+                        "msg": login_prepare_response.result.message,
                     }
                 tcp_client.close()
                 continue
-            proto = pd.decode_login_prepare_reply_proto(
-                prep.body["encrypt_key"], prep.body["data"]
+            login_prepare_data = packet_receiver.decrypt_login_prepare_reply_data(
+                login_prepare_response.body["encrypt_key"], login_prepare_response.body["data"]
             )
-            if not (proto.get("salt") and proto.get("verify_code")):
+            if not (login_prepare_data.get("salt") and login_prepare_data.get("verify_code")):
                 last_error_code = -2
                 tcp_client.close()
                 continue
-            enc_key = EncryptionKeyGenerator(
-                password, proto["salt"], proto["verify_code"]
+            login_encryption_key = EncryptionKeyGenerator(
+                password, login_prepare_data["salt"], login_prepare_data["verify_code"]
             ).generate()
-            resp = tcp_client.send_message(
-                LoginRequestHandler(password, enc_key.hex())
+            response_frames = tcp_client.send_message(
+                LoginRequest(password, login_encryption_key.hex())
                 .build_full_packet()
             )
-            if len(resp) < 2:
+            if len(response_frames) < 2:
                 last_error_code = -3
                 tcp_client.close()
                 continue
 
-            login = SystemResponse.from_packet(
-                pd.decode_packet(resp[0].hex(), resp[1].hex())
+            login_response = SystemResponse.from_packet(
+                packet_receiver.decode_packet(response_frames[0].hex(), response_frames[1].hex())
             )
-            if not login.is_success():
-                last_error_code = login.result.code
+            if not login_response.is_success():
+                last_error_code = login_response.result.code
                 if last_error_code not in [-1, -2, -3, -6, 110]:
                     return {
                         "code": last_error_code,
@@ -900,54 +900,54 @@ def login_and_get_keys(account, password, proxy=None, max_retries=3):
                     }
                 tcp_client.close()
                 continue
-            lp = pd.decode_login_reply_proto(enc_key.hex(), login.body["data"])
-            uid = lp.get("uid")
-            session_key = lp.get("session_key")
+            login_data = packet_receiver.decrypt_login_reply_data(login_encryption_key.hex(), login_response.body["data"])
+            uid = login_data.get("uid")
+            session_key = login_data.get("session_key")
             if not session_key:
                 last_error_code = -3
                 tcp_client.close()
                 continue
-            resp = tcp_client.send_message(
+            response_frames = tcp_client.send_message(
                 LoginTokenGetRequest(session_key).build_full_packet()
             )
-            _ = SystemResponse.from_packet(
-                pd.decode_packet(resp[0].hex(), resp[1].hex(), session_key)
+            token_response = SystemResponse.from_packet(
+                packet_receiver.decode_packet(response_frames[0].hex(), response_frames[1].hex(), session_key)
             )
-            packets = [
-                EmptyPacket(session_key, t).build_full_packet()
-                for t in (278, 511, 276, 278, 442, 342)
+            follow_up_packets = [
+                EmptyPacket(session_key, command).build_full_packet()
+                for command in (278, 511, 276, 278, 442, 342)
             ]
-            tcp_client.sock.sendall(b"".join(packets))
-            tcp_client.sock.settimeout(0.5)
+            tcp_client.connection_socket.sendall(b"".join(follow_up_packets))
+            tcp_client.connection_socket.settimeout(0.5)
 
-            merged = {}
+            replies_by_type = {}
             timeout_count = 0
             while timeout_count < 1:
                 try:
-                    hdr = tcp_client.sock.recv(4)
-                    if not hdr:
+                    frame_header = tcp_client.connection_socket.recv(4)
+                    if not frame_header:
                         break
-                    ln = struct.unpack("<I", hdr)[0]
-                    data = tcp_client.recv_all(ln)
-                    dec = pd.decode_packet(hdr.hex(), data.hex(), session_key)
-                    mtype = dec.get("message_type", "UNKNOWN")
-                    if mtype == "UNKNOWN":
+                    payload_length = struct.unpack("<I", frame_header)[0]
+                    payload = tcp_client.receive_exactly(payload_length)
+                    decoded_packet = packet_receiver.decode_packet(frame_header.hex(), payload.hex(), session_key)
+                    message_type = decoded_packet.get("message_type", "UNKNOWN")
+                    if message_type == "UNKNOWN":
                         continue
-                    body = dec.get("body", {})
-                    if mtype in merged:
-                        if not isinstance(merged[mtype], list):
-                            merged[mtype] = [merged[mtype]]
-                        merged[mtype].append(body)
+                    body = decoded_packet.get("body", {})
+                    if message_type in replies_by_type:
+                        if not isinstance(replies_by_type[message_type], list):
+                            replies_by_type[message_type] = [replies_by_type[message_type]]
+                        replies_by_type[message_type].append(body)
                     else:
-                        merged[mtype] = body
+                        replies_by_type[message_type] = body
                 except socket.timeout:
                     timeout_count += 1
                     continue
                 except Exception:
                     break
             sso_key = None
-            if "SsoKeyGetReply" in merged:
-                sso_data = merged["SsoKeyGetReply"]
+            if "SsoKeyGetReply" in replies_by_type:
+                sso_data = replies_by_type["SsoKeyGetReply"]
                 if isinstance(sso_data, list):
                     sso_data = sso_data[0]
                 sso_key = sso_data.get("sso_key")
@@ -965,9 +965,9 @@ def login_and_get_keys(account, password, proxy=None, max_retries=3):
                 tcp_client.close()
                 continue
 
-        except Exception as ex:
+        except Exception as error:
             last_error_code = -5
-            print(f"[login] Exception on attempt {attempt}: {ex}")
+            print(f"[login] Exception on attempt {attempt}: {error}")
             if tcp_client:
                 tcp_client.close()
             continue
@@ -978,7 +978,7 @@ def login_and_get_keys(account, password, proxy=None, max_retries=3):
     return {
         "code": last_error_code,
         "duration": round(time.time() - start_time, 2),
-        "attempts": max_retries
+        "attempts": maximum_retries
     }
 
 
@@ -986,7 +986,7 @@ app = Flask(__name__)
 
 
 @app.route('/api/login', methods=['GET'])
-def api_login_get():
+def handle_login_request():
     username = request.args.get('username')
     password = request.args.get('password')
     proxy = request.args.get('proxy')
@@ -996,8 +996,8 @@ def api_login_get():
 
     try:
         result = login_and_get_keys(username, password, proxy)
-    except Exception as e:
-        return jsonify({"code": -999, "error": str(e)}), 500
+    except Exception as error:
+        return jsonify({"code": -999, "error": str(error)}), 500
 
     return jsonify(result), 200
 

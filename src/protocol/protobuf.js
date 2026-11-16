@@ -1,6 +1,6 @@
 /**
  * Bộ mã hóa/giải mã Protobuf tối giản, tự viết (không dùng file .proto).
- * Tương ứng `BaseProtobufDecoder` (dòng 18–95) và `ProtoUtils` (dòng 352–368) trong `LoginTCPApp.py`.
+ * Tương ứng `BaseProtobufDecoder` (dòng 18–95) và `ProtobufEncoder` (dòng 352–368) trong `LoginTCPApp.py`.
  *
  * Hỗ trợ các wire type: 0 = varint, 1 = fixed64, 2 = length-delimited (bytes), 5 = fixed32.
  */

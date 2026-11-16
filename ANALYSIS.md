@@ -18,7 +18,7 @@ Nguồn được phân tích: file Python 1006 dòng do người dùng gửi. Ph
 - **Lỗi:** không kiểm tra offset sau khi đọc fixed32/fixed64/length-delimited; trường bị cắt ngắn có thể bị phân tích nhầm.
 - **Node.js:** `src/protocol/protobuf.js`, có kiểm tra giới hạn, varint dùng BigInt, JSON không mất chính xác số nguyên > 2^53−1.
 
-## 3. `PacketSend` (dòng 98–118)
+## 3. `PacketBuilder` (dòng 98–118)
 
 Cấu trúc request có header rõ:
 
@@ -38,15 +38,15 @@ Cấu trúc request có header rõ:
 - **Vấn đề:** seed là thời gian nên có thể đoán; nhiều packet trong cùng giây có nguy cơ dùng các giá trị khởi tạo giống nhau.
 - **Node.js:** tương thích `legacy`, cho tùy chọn `cryptographic` tạo ngẫu nhiên bằng `crypto.randomBytes`, **nhưng phải xác nhận server chấp nhận trước khi chuyển sang chế độ này**.
 
-## 5. `XTEACBC` (dòng 136–349)
+## 5. `XteaCustom` (dòng 136–349)
 
 - Key chính xác 16 byte, block size 8 byte, 32 vòng.
 - Đây **không phải CBC/XTEA tiêu chuẩn có thể thay bằng AES**. Nó có cách tạo block đầu đặc biệt, CBC qua các block, PKCS#7-like padding, thêm một block cuối được mã hóa để xử lý/check dữ liệu.
 - Phương thức decrypt bỏ một block cuối nhưng **không thực sự kiểm tra tính toàn vẹn của block đó**.
-- **Lỗi đã tái hiện bằng Python:** `crypt_xtea_cbc_encrypt()` chạy với input dưới 8 byte gây `UnboundLocalError` do biến `leftover` chỉ được gán bên trong vòng lặp xử lý các block đầy đủ.
+- **Lỗi đã tái hiện bằng Python:** `XteaCustom.encrypt()` chạy với input dưới 8 byte gây `UnboundLocalError` do biến `tail_bytes` chỉ được gán bên trong vòng lặp xử lý các block đầy đủ.
 - **Node.js:** `src/crypto/xtea-custom.js`; sửa lỗi input 0–7 byte, còn các input ≥8 byte cho kết quả giống hệt Python. Kiểm thử 150 bộ ngẫu nhiên, toàn bộ khớp.
 
-## 6. `ProtoUtils` (dòng 352–368)
+## 6. `ProtobufEncoder` (dòng 352–368)
 
 - Tạo Protobuf varint; đóng gói length-delimited là `varint(length) + bytes`.
 - **Node.js:** `encodeVarint()`, `encodeVarintField()`, `encodeBytesField()`.
@@ -73,7 +73,7 @@ Command **256**. Plaintext body:
 
 Body gốc được mã hóa bằng khóa ngẫu nhiên rồi đặt vào field 2 của body ngoài; chính khóa đó nằm ở field 1. Bản Node giữ đúng toàn bộ các field.
 
-## 9. `LoginRequestHandler` (dòng 442–478) — bản Node đổi tên thành `LoginRequest`
+## 9. `LoginRequest` (dòng 442–478)
 
 Command **257**. Body sau giải mã:
 
@@ -93,7 +93,7 @@ Key mã hóa bước 2 là kết quả `EncryptionKeyGenerator` (không còn là
 - `EmptyPacket`: body rỗng, command được truyền vào; file sử dụng 278, 511, 276, 278, 442, 342.
 - Node.js giữ byte format; đã so sánh chính xác với Python đối với command 277 và 442.
 
-## 11. `SystemError`, `SystemResponse` (dòng 526–629)
+## 11. `SystemErrorCode`, `SystemResponse` (dòng 526–629)
 
 - Bảng 78 mã lỗi được chuyển nguyên vào `system-errors.json`.
 - Các mã cần chú ý: 0 SUCCESS, 101 ACCOUNT_NOT_EXIST, 103 ACCOUNT_LOCKED, 104 VERSION_TOO_LOW, 105 CAPTCHA, 107 TOKEN_EXPIRED, 110 DECRYPT, 130 OTP_REQUIRE, 133 OTP_CODE_INVALID, 159 IP_LIMIT, 173 AUTH_USER_BAN.
@@ -125,7 +125,7 @@ key = final_digest[0:16]
 - Không thay MD5 bằng bcrypt/argon2 trong giao thức này vì sẽ thay đổi packet và mất tương thích. Phần ứng dụng tự xây dựng mới vẫn phải dùng chuẩn lưu mật khẩu hiện đại.
 - Node.js: `src/crypto/encryption-key.js`, kiểm thử output khớp Python.
 
-## 14. `TCPClient` (dòng 772–834)
+## 14. `TcpClient` (dòng 772–834)
 
 - TCP đích mặc định: `103.247.205.15:19000`.
 - Có SOCKS5 hoặc SOCKS5h; với hậu tố h, DNS được xử lý ở phía proxy.
@@ -151,7 +151,7 @@ Trình tự:
 - **Lỗi:** lỗi nhận packet đầu tiên gây `break` ngay, không dùng hết retry.
 - **Lỗi:** `resp[0]`, `resp[1]` sau lấy token không kiểm tra đủ độ dài.
 - **Lỗi:** vòng thu reply có thể chạy không có deadline tổng nếu liên tục xuất hiện packet chưa nhận dạng.
-- **Lỗi:** `attempts=max_retries` ở một số nhánh lỗi không phản ánh đúng số lần đã thử.
+- **Lỗi:** `attempts=maximum_retries` ở một số nhánh lỗi không phản ánh đúng số lần đã thử.
 - **Lỗi:** retry code 105 CAPTCHA không giúp xác minh người dùng, gây request lặp không cần thiết.
 - **Node.js:** `src/services/login-service.js`; trả `attempts` đúng, kiểm tra reply, timeout và frame count, `finally` đóng kết nối.
 

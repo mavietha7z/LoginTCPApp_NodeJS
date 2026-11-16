@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 
 /**
- * Cài đặt XTEA tùy biến, chuyển nguyên từ lớp `XTEACBC` trong `LoginTCPApp.py` (dòng 136–349).
+ * Cài đặt XTEA tùy biến, chuyển nguyên từ lớp `XteaCustom` trong `LoginTCPApp.py` (dòng 136–349).
  *
  * LƯU Ý: đây KHÔNG phải XTEA-CBC chuẩn. Định dạng bản mã gồm:
  *   [block khởi tạo sinh từ IV][các block dữ liệu CBC][block padding][block checksum]
@@ -99,7 +99,7 @@ function encryptBlock(firstWord, secondWord, keyWords) {
 
 /**
  * Giải mã một block 64 bit. Đây là phép nghịch đảo đúng theo cách viết của Python gốc
- * (`_xtea_decrypt_block_custom`), không phải AES/CBC có sẵn của Node.
+ * (`XteaCustom._decrypt_block`), không phải AES/CBC có sẵn của Node.
  *
  * - `firstWord` (number): Word trái của block bản mã.
  * - `secondWord` (number): Word phải của block bản mã.
@@ -302,7 +302,7 @@ class XteaCustom {
 
         /*
          * Block padding kiểu PKCS#7: phần dư của plaintext, điền byte có giá trị = số byte thiếu.
-         * Python gốc bị lỗi với plaintext < 8 byte (biến `leftover` chưa được gán);
+         * Python gốc bị lỗi với plaintext < 8 byte (biến `tail_bytes` chưa được gán);
          * lấy đúng phần đuôi thực tế sẽ sửa lỗi đó mà không đổi kết quả với input >= 8 byte.
          */
         const remainder = plaintext.length % BLOCK_SIZE;

@@ -5,7 +5,7 @@ import { XteaCustom } from '../crypto/xtea-custom.js';
  * Đóng gói (framing) packet TCP. Có hai dạng packet:
  *   - Dạng header rõ:     [u32 LE độ dài payload][u16 BE độ dài header][header Protobuf][body]
  *   - Dạng mã hóa toàn bộ: [u32 LE độ dài bản mã][XTEA([u16 BE độ dài header][header][body])]
- * Tương ứng `PacketSend` (dòng 98–118) và phần nhận diện packet trong `PacketReceiver` của Python.
+ * Tương ứng `PacketBuilder` (dòng 98–118) và phần nhận diện packet trong `PacketReceiver` của Python.
  */
 
 /**

@@ -23,7 +23,7 @@ test('custom XTEA encryption/decryption matches the Python byte-level fixtures',
     }
 });
 
-test('short plaintext now handles the original Python uninitialized-leftover bug', () => {
+test('short plaintext now handles the original Python uninitialized tail_bytes bug', () => {
     const cipher = new XteaCustom(cipherKey);
     for (let length = 0; length < 8; length += 1) {
         const input = Buffer.alloc(length, 0x61);

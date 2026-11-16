@@ -3,7 +3,7 @@ import dns from 'node:dns/promises';
 
 /**
  * Lớp kết nối TCP tới máy chủ đăng nhập, có hỗ trợ SOCKS5/SOCKS5h.
- * Tương ứng `TCPClient` trong `LoginTCPApp.py` (dòng 772–834), đã sửa các lỗi của bản gốc:
+ * Tương ứng `TcpClient` trong `LoginTCPApp.py` (dòng 772–834), đã sửa các lỗi của bản gốc:
  * đọc thiếu byte, không có timeout, không giới hạn kích thước packet.
  */
 

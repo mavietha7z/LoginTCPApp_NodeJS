@@ -17,7 +17,7 @@ Quy ước code:
 
 ## Tổng quan
 
-Bản port Node.js (**ES Module** — `"type": "module"`, Node >= 22.12, **không có dependency npm**) của `LoginTCPApp.py`. Ứng dụng đăng nhập vào một máy chủ TCP dùng Protobuf tự viết + custom XTEA, lấy `uid`, `session_key`, `sso_key`, và mở HTTP API `POST /api/login`. `LoginTCPApp.py` là **nguồn tham chiếu gốc**, không chạy trong dự án — dùng để đối chiếu hành vi. `ANALYSIS.md` ghi lại phân tích từng class Python (kèm số dòng) và các lỗi đã sửa khi port.
+Bản port Node.js (**ES Module** — `"type": "module"`, Node >= 22.12, **không có dependency npm**) của `LoginTCPApp.py`. Ứng dụng đăng nhập vào một máy chủ TCP dùng Protobuf tự viết + custom XTEA, lấy `uid`, `session_key`, `sso_key`, và mở HTTP API `POST /api/login/garena`. `LoginTCPApp.py` là **nguồn tham chiếu gốc**, không chạy trong dự án — dùng để đối chiếu hành vi. File này chỉ được đổi tên biến/hàm/lớp cho dễ đọc (ví dụ `XteaCustom`, `TcpClient`, `LoginRequest`); logic, kể cả các lỗi gốc, và số dòng giữ y như bản ban đầu nên số dòng ghi trong ANALYSIS.md và comment vẫn đúng. Tên gốc xem trong lịch sử git. `ANALYSIS.md` ghi lại phân tích từng class Python (kèm số dòng) và các lỗi đã sửa khi port.
 
 Là git repo (remote `origin` trên GitHub, nhánh `main`).
 
