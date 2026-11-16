@@ -1,0 +1,16 @@
+{
+    "name": "login-tcp-app-nodejs",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Node.js port of LoginTCPApp.py, with byte-compatible custom XTEA/Protobuf and guarded HTTP API",
+    "engines": {
+        "node": ">=22"
+    },
+    "scripts": {
+        "start": "node --env-file=.env server.js",
+        "start:env": "node server.js",
+        "check": "node --test",
+        "test": "node --test"
+    },
+    "license": "UNLICENSED"
+}
