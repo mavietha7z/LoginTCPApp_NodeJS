@@ -68,3 +68,7 @@ Trình tự đăng nhập trong `loginAndGetKeys` (mỗi lần retry mở kết 
 ## Test
 
 `test/login-service.test.js` dựng mock TCP server, mock SOCKS5 và HTTP server trong tiến trình (cổng ngẫu nhiên). `createServer(configuration, loginService)` nhận `loginService` inject được; `loginAndGetKeys` nhận `options.transportFactory` để thay `TcpClient` bằng transport giả — dùng các điểm này khi viết test mới thay vì gọi mạng thật.
+
+## Triển khai
+
+Xem `DEPLOY.md`. VPS Ubuntu 24.04 chạy app bằng systemd (`deploy/login-tcp-api.service`, user `logintcp`, `/opt/login-tcp-api`), Caddy làm HTTPS cho `api-gateway.ha2cm.com` và proxy về `127.0.0.1:HTTP_PORT`. Trên VPS app gọi thẳng máy chủ TCP (không đặt `SOCKS_PROXY_URL`); máy local mở `ssh -D 127.0.0.1:1080` tới user `tunnel` trên VPS, user này chỉ được forward tới `TCP_SERVER_HOST:TCP_SERVER_PORT` (`PermitOpen` trong `deploy/sshd-tunnel.conf`). `deploy/setup-vps.sh` cài toàn bộ và chạy lại được; đổi máy chủ TCP thì phải chạy lại script để cập nhật `PermitOpen`.

@@ -1,0 +1,18 @@
+# Mẫu cấu hình Caddy cho VPS. `setup-vps.sh` thay __DOMAIN__ và __APP_PORT__ rồi chép vào /etc/caddy/Caddyfile.
+# Caddy tự xin và tự gia hạn chứng chỉ HTTPS (Let's Encrypt) khi bản ghi DNS của domain đã trỏ về VPS.
+#
+# KHÔNG bật chỉ thị `log` ở đây: access log của Caddy ghi cả header request, trong đó có X-API-Key.
+
+__DOMAIN__ {
+	# Tùy chọn: chỉ cho phép một số IP gọi API (ví dụ IP backend của bạn).
+	# Bỏ dấu # ở 3 dòng dưới và thay danh sách IP.
+	# @notAllowed not remote_ip 203.0.113.10 198.51.100.0/24
+	# respond @notAllowed 403
+
+	reverse_proxy 127.0.0.1:__APP_PORT__
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+	}
+}

@@ -14,6 +14,8 @@ LoginTCPApp_NodeJS/
 ├── .gitignore
 ├── README.md
 ├── ANALYSIS.md                         # Phân tích chi tiết file Python
+├── DEPLOY.md                           # Hướng dẫn triển khai VPS + SSH tunnel
+├── deploy/                             # Script cài đặt, systemd, Caddy, cấu hình SSH tunnel
 ├── src/
 │   ├── configuration.js                # Đọc và kiểm tra biến môi trường
 │   ├── crypto/
@@ -152,6 +154,10 @@ python -c "import uuid; print(hash(uuid.getnode()))"
 ```
 
 Sao chép kết quả số thập phân vào `DEVICE_ID=...` của `.env`. Đây là thiết lập tương thích, không phải kỹ thuật vượt qua ràng buộc thiết bị hay bảo mật dịch vụ.
+
+## Triển khai lên VPS
+
+Xem [DEPLOY.md](DEPLOY.md): Ubuntu 24.04, Caddy (HTTPS cho `api-gateway.ha2cm.com`), systemd. Trên VPS app gọi thẳng máy chủ TCP; máy local dùng SSH SOCKS tunnel tới VPS (`SOCKS_PROXY_URL=socks5h://127.0.0.1:1080`) để đi ra cùng IP.
 
 ## Tích hợp vào backend dự án khác
 

@@ -102,5 +102,5 @@ test('header framing and duplicate protobuf fields decode as expected', () => {
     const frame = Buffer.from(packetFixtures.prepare_packet_hex, 'hex');
     assert.equal(frame.readUInt32LE(0), frame.length - 4);
     assert.equal(decodePacket(frame).header.command, 256);
-    assert.throws(() => decodePacket(Buffer.from([4, 0, 0, 0, 0, 0])), /framing length mismatch/);
+    assert.throws(() => decodePacket(Buffer.from([4, 0, 0, 0, 0, 0])), /Độ dài framing của packet TCP không khớp/);
 });
