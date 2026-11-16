@@ -1,166 +1,260 @@
 'use strict';
 
 const { performance } = require('node:perf_hooks');
+
 const { generateEncryptionKey } = require('../crypto/encryption-key');
-const { LoginPrepareRequest, LoginRequestHandler, LoginTokenGetRequest, EmptyPacket } = require('../protocol/requests');
+const { EmptyPacket, LoginPrepareRequest, LoginRequest, LoginTokenGetRequest } = require('../protocol/requests');
 const {
-    decodePacket,
-    decryptResponseData,
     decodeLoginPrepareReplyData,
     decodeLoginReplyData,
+    decodePacket,
+    decryptResponseData,
     SystemResponse,
 } = require('../protocol/responses');
 const { TcpClient, TimeoutError } = require('../transport/tcp-client');
 
-function durationSeconds(startedAt) {
-    return Math.round((performance.now() - startedAt) / 10) / 100;
+/**
+ * Điều phối toàn bộ luồng đăng nhập TCP và lấy SSO key.
+ * Tương ứng hàm `login_and_get_keys` trong `LoginTCPApp.py` (dòng 837–981).
+ */
+
+/** Mã lỗi máy chủ được phép thử lại: 110 = ERROR_DECRYPT. CAPTCHA/lỗi xác thực không thử lại. */
+const RETRYABLE_ERROR_CODES = new Set([110]);
+/** Các lệnh gửi gộp sau khi lấy token, theo đúng thứ tự của Python. */
+const FOLLOW_UP_COMMANDS = [278, 511, 276, 278, 442, 342];
+
+/** Mã lỗi nội bộ (âm) — không phải mã của máy chủ. */
+const INTERNAL_ERROR_CODES = Object.freeze({
+    /** Chưa có lần thử nào ghi nhận lỗi (ví dụ maximumRetries = 0). */
+    NO_ATTEMPT: -5999,
+    /** LoginPrepareReply thiếu khóa, dữ liệu, salt hoặc verify_code. */
+    MISSING_PREPARE_DATA: -2,
+    /** LoginReply thiếu dữ liệu hoặc session key không hợp lệ. */
+    INVALID_LOGIN_DATA: -3,
+    /** Không nhận được SSO key hợp lệ trong thời gian chờ. */
+    MISSING_SSO_KEY: -4,
+    /** Lỗi kết nối hoặc lỗi phân tích packet. */
+    TRANSPORT_ERROR: -5,
+});
+
+/**
+ * Tính thời gian đã trôi qua, làm tròn 2 chữ số thập phân (giống `round(..., 2)` của Python).
+ *
+ * @param {number} startTime - Mốc thời gian lấy từ `performance.now()`.
+ * @returns {number} Số giây đã trôi qua.
+ */
+function calculateElapsedSeconds(startTime) {
+    return Math.round((performance.now() - startTime) / 10) / 100;
 }
 
-function systemErrorResult(code, message, startedAt, attempts) {
-    return {
-        code,
-        ...(message ? { msg: message } : {}),
-        duration: durationSeconds(startedAt),
-        attempts,
-    };
+/**
+ * Dựng object kết quả lỗi trả về cho người gọi.
+ *
+ * @param {number} code - Mã lỗi (của máy chủ hoặc nội bộ).
+ * @param {string|null} message - Mô tả lỗi; bỏ qua nếu rỗng.
+ * @param {number} startTime - Mốc bắt đầu, dùng để tính `duration`.
+ * @param {number} attempts - Số lần đã thử.
+ * @returns {{ code: number, msg?: string, duration: number, attempts: number }}
+ */
+function buildErrorResult(code, message, startTime, attempts) {
+    const result = { code };
+    if (message) {
+        result.msg = message;
+    }
+    result.duration = calculateElapsedSeconds(startTime);
+    result.attempts = attempts;
+
+    return result;
 }
 
+/**
+ * Kiểm tra lỗi đọc frame có phải là "hết dữ liệu" (timeout hoặc máy chủ đóng kết nối) hay không.
+ *
+ * @param {Error} error - Lỗi từ `readFrame`.
+ * @returns {boolean} true nếu nên dừng thu thập reply một cách bình thường.
+ */
+function isEndOfResponseStream(error) {
+    return error instanceof TimeoutError || error.message === 'TCP connection ended' || error.message === 'TCP connection closed';
+}
+
+/**
+ * Đăng nhập vào máy chủ TCP và lấy uid, session key, SSO key.
+ *
+ * Trình tự mỗi lần thử (mỗi lần mở kết nối TCP mới):
+ *   1. LoginPrepare (256): nhận salt và verify_code.
+ *   2. Login (257): gửi MD5 mật khẩu đã mã hóa, nhận uid và session key.
+ *   3. LoginTokenGet (277): packet mã hóa toàn bộ bằng session key.
+ *   4. Gửi gộp các lệnh 278, 511, 276, 278, 442, 342 rồi chờ SsoKeyGetReply.
+ * Chỉ thử lại với lỗi kết nối, dữ liệu thiếu, hoặc mã lỗi trong RETRYABLE_ERROR_CODES.
+ *
+ * @param {string} account - Tên tài khoản hoặc email.
+ * @param {string} password - Mật khẩu.
+ * @param {object} [options]
+ * @param {number} [options.maximumRetries=3] - Số lần thử tối đa.
+ * @param {string} [options.deviceIdentifier] - Device ID thập phân; bỏ trống để tự xác định.
+ * @param {'legacy'|'cryptographic'} [options.randomMode='legacy'] - Cách sinh IV của XTEA.
+ * @param {object} [options.transportOptions] - Tùy chọn truyền cho `TcpClient`.
+ * @param {() => object} [options.transportFactory] - Hàm tạo transport thay cho `TcpClient` (dùng trong test).
+ * @param {number} [options.responseWindowMilliseconds=3000] - Tổng thời gian chờ SsoKeyGetReply.
+ * @param {number} [options.responseIdleTimeoutMilliseconds=500] - Thời gian chờ tối đa giữa hai frame.
+ * @param {number} [options.maximumFollowUpFrames=64] - Số frame tối đa đọc khi chờ SSO key.
+ * @returns {Promise<object>} Khi thành công: { code: 0, uid, session_key, SsoKeyGetReply: { sso_key }, duration, attempts };
+ *   khi thất bại: { code, msg?, duration, attempts }.
+ */
 async function loginAndGetKeys(account, password, options = {}) {
-    const startedAt = performance.now();
-    const maxRetries = options.maxRetries ?? 3;
-    const retryableSystemCodes = new Set([110]); // ERROR_DECRYPT
-    let lastErrorCode = -5999;
-    let lastErrorMessage = null;
-    let attempt = 0;
+    const startTime = performance.now();
+    const maximumRetries = options.maximumRetries ?? 3;
     const randomMode = options.randomMode || 'legacy';
     const requestOptions = {
         deviceIdentifier: options.deviceIdentifier,
         randomMode,
     };
 
-    for (attempt = 1; attempt <= maxRetries; attempt += 1) {
-        const client = options.transportFactory ? options.transportFactory() : new TcpClient(options.transportOptions);
-        try {
-            await client.connect();
+    let lastErrorCode = INTERNAL_ERROR_CODES.NO_ATTEMPT;
+    let lastErrorMessage = null;
+    let attempt = 0;
 
-            // Step 1: LoginPrepare, command 256 (unencrypted outer header).
-            const prepareFrame = await client.sendMessage(new LoginPrepareRequest(account, requestOptions).buildFullPacket());
-            const prepareReply = new SystemResponse(decodePacket(prepareFrame));
-            if (!prepareReply.isSuccess()) {
-                lastErrorCode = prepareReply.code;
-                lastErrorMessage = prepareReply.message;
-                // Do not retry CAPTCHA/auth/account blocks automatically.
-                if (!retryableSystemCodes.has(lastErrorCode)) {
-                    return systemErrorResult(lastErrorCode, lastErrorMessage, startedAt, attempt);
+    for (attempt = 1; attempt <= maximumRetries; attempt += 1) {
+        const tcpClient = options.transportFactory ? options.transportFactory() : new TcpClient(options.transportOptions);
+
+        try {
+            await tcpClient.connect();
+
+            // Bước 1: LoginPrepare, command 256 (header ở dạng rõ).
+            const loginPreparePacket = new LoginPrepareRequest(account, requestOptions).buildFullPacket();
+            const loginPrepareFrame = await tcpClient.sendMessage(loginPreparePacket);
+            const loginPrepareReply = new SystemResponse(decodePacket(loginPrepareFrame));
+
+            if (!loginPrepareReply.isSuccess()) {
+                lastErrorCode = loginPrepareReply.code;
+                lastErrorMessage = loginPrepareReply.message;
+                // Không tự thử lại khi gặp CAPTCHA, lỗi xác thực hoặc tài khoản bị khóa.
+                if (!RETRYABLE_ERROR_CODES.has(lastErrorCode)) {
+                    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attempt);
                 }
                 continue;
             }
-            if (!prepareReply.body.encrypt_key || !prepareReply.body.data) {
-                lastErrorCode = -2;
+            if (!loginPrepareReply.body.encrypt_key || !loginPrepareReply.body.data) {
+                lastErrorCode = INTERNAL_ERROR_CODES.MISSING_PREPARE_DATA;
                 lastErrorMessage = 'Missing LoginPrepare encryption fields';
                 continue;
             }
-            const prepareData = decodeLoginPrepareReplyData(decryptResponseData(prepareReply.body.encrypt_key, prepareReply.body.data));
-            if (!prepareData.salt || !prepareData.verify_code) {
-                lastErrorCode = -2;
+
+            const decryptedPrepareData = decryptResponseData(loginPrepareReply.body.encrypt_key, loginPrepareReply.body.data);
+            const loginPrepareData = decodeLoginPrepareReplyData(decryptedPrepareData);
+            if (!loginPrepareData.salt || !loginPrepareData.verify_code) {
+                lastErrorCode = INTERNAL_ERROR_CODES.MISSING_PREPARE_DATA;
                 lastErrorMessage = 'Missing LoginPrepare salt or verification code';
                 continue;
             }
 
-            // Step 2: Login, command 257. MD5 -> SHA256 -> SHA256 yields 16-byte XTEA key.
-            const loginEncryptionKey = generateEncryptionKey(password, prepareData.salt, prepareData.verify_code);
-            const loginFrame = await client.sendMessage(
-                new LoginRequestHandler(password, loginEncryptionKey, requestOptions).buildFullPacket(),
-            );
+            // Bước 2: Login, command 257. MD5 -> SHA256 -> SHA256 cho ra khóa XTEA 16 byte.
+            const loginEncryptionKey = generateEncryptionKey(password, loginPrepareData.salt, loginPrepareData.verify_code);
+            const loginPacket = new LoginRequest(password, loginEncryptionKey, requestOptions).buildFullPacket();
+            const loginFrame = await tcpClient.sendMessage(loginPacket);
             const loginReply = new SystemResponse(decodePacket(loginFrame));
+
             if (!loginReply.isSuccess()) {
                 lastErrorCode = loginReply.code;
                 lastErrorMessage = loginReply.message;
-                if (!retryableSystemCodes.has(lastErrorCode)) {
-                    return systemErrorResult(lastErrorCode, lastErrorMessage, startedAt, attempt);
+                if (!RETRYABLE_ERROR_CODES.has(lastErrorCode)) {
+                    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attempt);
                 }
                 continue;
             }
             if (!loginReply.body.data) {
-                lastErrorCode = -3;
+                lastErrorCode = INTERNAL_ERROR_CODES.INVALID_LOGIN_DATA;
                 lastErrorMessage = 'Missing Login reply data';
                 continue;
             }
-            const loginData = decodeLoginReplyData(decryptResponseData(loginEncryptionKey, loginReply.body.data));
+
+            const decryptedLoginData = decryptResponseData(loginEncryptionKey, loginReply.body.data);
+            const loginData = decodeLoginReplyData(decryptedLoginData);
             const sessionKey = loginData.session_key;
+            // Session key hợp lệ phải đúng 16 byte, tức 32 ký tự hex.
             if (!sessionKey || !/^[0-9a-f]{32}$/.test(sessionKey)) {
-                lastErrorCode = -3;
+                lastErrorCode = INTERNAL_ERROR_CODES.INVALID_LOGIN_DATA;
                 lastErrorMessage = 'Invalid 16-byte session key';
                 continue;
             }
+            const sessionKeyBytes = Buffer.from(sessionKey, 'hex');
 
-            // Step 3: Request token, command 277; subsequent commands use fully encrypted frames.
-            const tokenFrame = await client.sendMessage(new LoginTokenGetRequest(sessionKey, requestOptions).buildFullPacket());
-            const tokenReply = new SystemResponse(decodePacket(tokenFrame, Buffer.from(sessionKey, 'hex')));
+            // Bước 3: lấy token, command 277; từ đây mọi packet đều mã hóa toàn bộ bằng session key.
+            const tokenPacket = new LoginTokenGetRequest(sessionKey, requestOptions).buildFullPacket();
+            const tokenFrame = await tcpClient.sendMessage(tokenPacket);
+            const tokenReply = new SystemResponse(decodePacket(tokenFrame, sessionKeyBytes));
+
             if (!tokenReply.isSuccess()) {
                 lastErrorCode = tokenReply.code;
                 lastErrorMessage = tokenReply.message;
-                if (!retryableSystemCodes.has(lastErrorCode)) {
-                    return systemErrorResult(lastErrorCode, lastErrorMessage, startedAt, attempt);
+                if (!RETRYABLE_ERROR_CODES.has(lastErrorCode)) {
+                    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attempt);
                 }
                 continue;
             }
 
-            const followUpCommands = [278, 511, 276, 278, 442, 342];
-            const followUpPackets = followUpCommands.map((command) =>
+            // Gửi gộp các lệnh tiếp theo trong một lần ghi, giống `sendall` của Python.
+            const followUpPackets = FOLLOW_UP_COMMANDS.map((command) =>
                 new EmptyPacket(sessionKey, command, requestOptions).buildFullPacket(),
             );
-            await client.write(Buffer.concat(followUpPackets));
+            await tcpClient.write(Buffer.concat(followUpPackets));
 
-            // Step 4: Collect responses without depending on recv() chunk boundaries.
-            const responseWindowMs = options.responseWindowMs ?? 3000;
-            const responseIdleTimeoutMs = options.responseIdleTimeoutMs ?? 500;
-            const responseDeadline = Date.now() + responseWindowMs;
-            const maxFollowUpFrames = options.maxFollowUpFrames ?? 64;
+            // Bước 4: đọc reply cho tới khi gặp SsoKeyGetReply, hết thời gian, hoặc hết số frame cho phép.
+            const responseWindowMilliseconds = options.responseWindowMilliseconds ?? 3000;
+            const responseIdleTimeoutMilliseconds = options.responseIdleTimeoutMilliseconds ?? 500;
+            const maximumFollowUpFrames = options.maximumFollowUpFrames ?? 64;
+            const responseDeadline = Date.now() + responseWindowMilliseconds;
+
             let ssoKey = null;
-            for (let frameIndex = 0; frameIndex < maxFollowUpFrames; frameIndex += 1) {
-                const remainingMs = responseDeadline - Date.now();
-                if (remainingMs <= 0) break;
+            for (let frameIndex = 0; frameIndex < maximumFollowUpFrames; frameIndex += 1) {
+                const remainingMilliseconds = responseDeadline - Date.now();
+                if (remainingMilliseconds <= 0) break;
+
                 let replyFrame;
                 try {
-                    replyFrame = await client.readFrame(Math.min(remainingMs, responseIdleTimeoutMs));
+                    const frameTimeoutMilliseconds = Math.min(remainingMilliseconds, responseIdleTimeoutMilliseconds);
+                    replyFrame = await tcpClient.readFrame(frameTimeoutMilliseconds);
                 } catch (error) {
-                    if (
-                        error instanceof TimeoutError ||
-                        error.message === 'TCP connection ended' ||
-                        error.message === 'TCP connection closed'
-                    ) {
+                    if (isEndOfResponseStream(error)) {
                         break;
                     }
                     throw error;
                 }
-                const reply = decodePacket(replyFrame, Buffer.from(sessionKey, 'hex'));
+
+                const reply = decodePacket(replyFrame, sessionKeyBytes);
                 if (reply.message_type === 'SsoKeyGetReply' && reply.body.sso_key) {
                     ssoKey = reply.body.sso_key;
                     break;
                 }
             }
+
+            // Giống Python: SSO key phải dài tối thiểu 8 ký tự mới coi là hợp lệ.
             if (ssoKey && ssoKey.length >= 8) {
                 return {
                     code: 0,
                     uid: loginData.uid,
                     session_key: sessionKey,
                     SsoKeyGetReply: { sso_key: ssoKey },
-                    duration: durationSeconds(startedAt),
+                    duration: calculateElapsedSeconds(startTime),
                     attempts: attempt,
                 };
             }
-            lastErrorCode = -4;
+
+            lastErrorCode = INTERNAL_ERROR_CODES.MISSING_SSO_KEY;
             lastErrorMessage = 'SSO key was not returned';
         } catch (error) {
-            lastErrorCode = -5;
-            // Errors remain in the backend only; never echo internal host/proxy details through HTTP.
+            lastErrorCode = INTERNAL_ERROR_CODES.TRANSPORT_ERROR;
+            // LƯU Ý: error.message hiện vẫn được trả ra HTTP qua trường `msg`, có thể lộ địa chỉ
+            // máy chủ/proxy (lỗi đã ghi nhận khi audit, chưa sửa vì đợt này giữ nguyên logic).
             lastErrorMessage = error instanceof TimeoutError ? 'TCP connection timed out' : error.message;
         } finally {
-            client.close();
+            tcpClient.close();
         }
     }
-    return systemErrorResult(lastErrorCode, lastErrorMessage, startedAt, Math.min(attempt - 1, maxRetries));
+
+    // Sau vòng lặp, attempt = maximumRetries + 1 nên số lần đã thử là attempt - 1.
+    const attemptCount = Math.min(attempt - 1, maximumRetries);
+    return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attemptCount);
 }
 
 module.exports = { loginAndGetKeys };

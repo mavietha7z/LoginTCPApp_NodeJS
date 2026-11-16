@@ -4,13 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Ngôn ngữ
 
-Người dùng làm việc bằng **tiếng Việt**: trả lời, giải thích, viết tài liệu (README, ANALYSIS) bằng tiếng Việt. Tên biến, comment trong code giữ tiếng Anh như hiện tại.
+Người dùng làm việc bằng **tiếng Việt**: trả lời, giải thích, viết tài liệu (README, ANALYSIS) bằng tiếng Việt.
+
+Quy ước code:
+
+- Comment và JSDoc trong code viết bằng **tiếng Việt**: mỗi class/hàm/method có khối JSDoc (mục đích, `@param`, `@returns`, `@throws`, dòng tương ứng trong `LoginTCPApp.py`).
+- Tên hàm/biến viết bằng tiếng Anh, **không viết tắt** (`maximumRetries`, `readTimeoutMilliseconds`, `configuration`; không dùng `max…`, `…Ms`, `config`, `msg`). Ngoại lệ: từ viết tắt chuẩn ngành (XTEA, TCP, SSO, JSON, HTTP, UTF-8, SOCKS5, MD5, SHA256, varint, `Lrand48`).
+- Không lồng nhiều lệnh gọi trên một dòng; tách thành biến trung gian có tên rõ nghĩa.
+- Giữ nguyên các tên thuộc hợp đồng bên ngoài: biến môi trường (`MAX_RETRIES`, `*_MS`…), key JSON trả về (`uid`, `session_key`, `sso_key`, `msg`, `SsoKeyGetReply`), key đối chiếu Python (`encrypt_key`, `verify_code`, `message_type`, `command_type`), và hàm `loginAndGetKeys`.
+- Thông báo lỗi (`new Error(...)`) giữ tiếng Anh vì một số được trả thẳng ra API và test có so khớp.
 
 ## Tổng quan
 
 Bản port Node.js (CommonJS, Node >= 22, **không có dependency npm**) của `LoginTCPApp.py`. Ứng dụng đăng nhập vào một máy chủ TCP dùng Protobuf tự viết + custom XTEA, lấy `uid`, `session_key`, `sso_key`, và mở HTTP API `POST /api/login`. `LoginTCPApp.py` là **nguồn tham chiếu gốc**, không chạy trong dự án — dùng để đối chiếu hành vi. `ANALYSIS.md` ghi lại phân tích từng class Python (kèm số dòng) và các lỗi đã sửa khi port.
 
-Thư mục chưa phải git repo.
+Là git repo (remote `origin` trên GitHub, nhánh `main`).
 
 ## Lệnh
 
@@ -32,7 +40,7 @@ Trình tự đăng nhập trong `loginAndGetKeys` (mỗi lần retry mở kết 
 
 1. **256 LoginPrepare** — header rõ; body = `[field1: random key 16B][field2: XTEA(random key, data)]`. Reply trả `salt`, `verify_code` (đã mã hóa bằng `encrypt_key` trong reply).
 2. **257 Login** — key = `SHA256(hex(SHA256(md5hex(pw)+salt)) + verify_code)[0:16]` (`src/crypto/encryption-key.js`). Body chỉ có field1 = ciphertext. Reply trả `uid`, `session_key` (16B, hex).
-3. **277 LoginTokenGet** và các lệnh sau dùng **packet mã hóa toàn bộ**: chỉ 4 byte độ dài để rõ, phần `[header_len][header][body]` mã hóa bằng `session_key`.
+3. **277 LoginTokenGet** và các lệnh sau dùng **packet mã hóa toàn bộ**: chỉ 4 byte độ dài để ở dạng rõ, phần `[header_len][header][body]` mã hóa bằng `session_key`.
 4. Gửi gộp `278, 511, 276, 278, 442, 342` rồi đọc frame trong `RESPONSE_WINDOW_MS` cho tới khi gặp `SsoKeyGetReply` (command 274/294/442).
 
 Định dạng wire (phải giữ đúng từng byte):
@@ -58,4 +66,4 @@ Trình tự đăng nhập trong `loginAndGetKeys` (mỗi lần retry mở kết 
 
 ## Test
 
-`test/login-service.test.js` dựng mock TCP server, mock SOCKS5 và HTTP server trong tiến trình (cổng ngẫu nhiên). `createServer(config, loginService)` nhận `loginService` inject được; `loginAndGetKeys` nhận `options.transportFactory` để thay `TcpClient` bằng transport giả — dùng các điểm này khi viết test mới thay vì gọi mạng thật.
+`test/login-service.test.js` dựng mock TCP server, mock SOCKS5 và HTTP server trong tiến trình (cổng ngẫu nhiên). `createServer(configuration, loginService)` nhận `loginService` inject được; `loginAndGetKeys` nhận `options.transportFactory` để thay `TcpClient` bằng transport giả — dùng các điểm này khi viết test mới thay vì gọi mạng thật.

@@ -43,8 +43,8 @@ Cấu trúc request có header rõ:
 - Key chính xác 16 byte, block size 8 byte, 32 vòng.
 - Đây **không phải CBC/XTEA tiêu chuẩn có thể thay bằng AES**. Nó có cách tạo block đầu đặc biệt, CBC qua các block, PKCS#7-like padding, thêm một block cuối được mã hóa để xử lý/check dữ liệu.
 - Phương thức decrypt bỏ một block cuối nhưng **không thực sự kiểm tra tính toàn vẹn của block đó**.
-- **Lỗi xác nhận bằng Python:** `crypt_xtea_cbc_encrypt()` chạy với input dưới 8 byte gây `UnboundLocalError` do biến `leftover` chỉ được gán bên trong vòng lặp full blocks.
-- **Node.js:** `src/crypto/xtea-custom.js`; sửa lỗi input 0–7 byte, còn các input ≥8 byte cho kết quả đúng bằng Python. Kiểm thử 150 bộ ngẫu nhiên, toàn bộ khớp.
+- **Lỗi đã tái hiện bằng Python:** `crypt_xtea_cbc_encrypt()` chạy với input dưới 8 byte gây `UnboundLocalError` do biến `leftover` chỉ được gán bên trong vòng lặp xử lý các block đầy đủ.
+- **Node.js:** `src/crypto/xtea-custom.js`; sửa lỗi input 0–7 byte, còn các input ≥8 byte cho kết quả giống hệt Python. Kiểm thử 150 bộ ngẫu nhiên, toàn bộ khớp.
 
 ## 6. `ProtoUtils` (dòng 352–368)
 
@@ -71,9 +71,9 @@ Command **256**. Plaintext body:
 | 4     | varint        | `client_type=4352`                                |
 | 5     | varint        | `client_version=246`                              |
 
-Plaintext body được mã hóa bằng random key và gói với key ở outer field 1. Node chuyển đúng tất cả các field.
+Body gốc được mã hóa bằng khóa ngẫu nhiên rồi đặt vào field 2 của body ngoài; chính khóa đó nằm ở field 1. Bản Node giữ đúng toàn bộ các field.
 
-## 9. `LoginRequestHandler` (dòng 442–478)
+## 9. `LoginRequestHandler` (dòng 442–478) — bản Node đổi tên thành `LoginRequest`
 
 Command **257**. Body sau giải mã:
 
@@ -106,7 +106,7 @@ Key mã hóa bước 2 là kết quả `EncryptionKeyGenerator` (không còn là
 - SsoKeyGetReply command 274/294/442 với command_type=3 hoặc 4; body field 1 là SSO key.
 - Dữ liệu của LoginPrepareReply sau decrypt có salt và verify_code ở field 1/2.
 - LoginReply sau decrypt có uid và session_key ở field 1/2.
-- **Lỗi:** mã gốc phân biệt packet fully encrypted bằng phỏng đoán 2 byte đầu là header length; xác suất nhỏ có thể đọc nhầm. Node kiểm tra cấu trúc Protobuf trước khi fallback decrypt.
+- **Lỗi:** mã gốc phân biệt packet mã hóa toàn bộ bằng cách đoán 2 byte đầu là độ dài header; có xác suất nhỏ đọc nhầm. Bản Node kiểm tra cấu trúc Protobuf trước, thất bại mới chuyển sang giải mã.
 - **Lỗi:** đoạn gốc không bảo đảm mọi trường bắt buộc có đúng kiểu dữ liệu trước khi gọi `.hex()`.
 - **Node.js:** `src/protocol/responses.js`.
 
@@ -130,10 +130,10 @@ key = final_digest[0:16]
 - TCP đích mặc định: `103.247.205.15:19000`.
 - Có SOCKS5 hoặc SOCKS5h; với hậu tố h, DNS được xử lý ở phía proxy.
 - **Lỗi:** không có connection timeout mặc định.
-- **Lỗi:** `recv(4)` có thể trả ít hơn 4 byte; làm lệch framing.
+- **Lỗi:** `recv(4)` có thể trả về ít hơn 4 byte, làm lệch việc tách frame.
 - **Lỗi:** `send_message()` nuốt mọi exception và trả mảng rỗng.
 - **Lỗi:** không giới hạn payload length trước khi cấp bộ nhớ.
-- **Node.js:** `src/transport/tcp-client.js` đọc đúng số byte, xử lý fragmented frames, timeout, giới hạn kích thước, SOCKS5 handshake (cả username/password).
+- **Node.js:** `src/transport/tcp-client.js` đọc đúng số byte, ghép đúng các frame bị chia nhỏ, có timeout, giới hạn kích thước, tự bắt tay SOCKS5 (hỗ trợ cả username/password).
 
 ## 15. `login_and_get_keys` (dòng 837–981)
 
@@ -151,7 +151,7 @@ Trình tự:
 - **Lỗi:** lỗi nhận packet đầu tiên gây `break` ngay, không dùng hết retry.
 - **Lỗi:** `resp[0]`, `resp[1]` sau lấy token không kiểm tra đủ độ dài.
 - **Lỗi:** vòng thu reply có thể chạy không có deadline tổng nếu liên tục xuất hiện packet chưa nhận dạng.
-- **Lỗi:** `attempts=max_retries` trong một số lỗi không phản ánh số lượt thử thật.
+- **Lỗi:** `attempts=max_retries` ở một số nhánh lỗi không phản ánh đúng số lần đã thử.
 - **Lỗi:** retry code 105 CAPTCHA không giúp xác minh người dùng, gây request lặp không cần thiết.
 - **Node.js:** `src/services/login-service.js`; trả `attempts` đúng, kiểm tra reply, timeout và frame count, `finally` đóng kết nối.
 
@@ -163,10 +163,10 @@ Node.js thay thành:
 
 - `POST /api/login` với JSON body.
 - Header bắt buộc `X-API-Key` dùng `crypto.timingSafeEqual`.
-- Không nhận `proxy` từ request; cấu hình proxy trong `.env`.
+- Không nhận `proxy` từ request; proxy chỉ cấu hình trong `.env`.
 - Mặc định bind `127.0.0.1` thay vì mở toàn mạng.
 - `GET /health` đơn giản, không lộ session key.
-- Giới hạn kích thước JSON, đồng thời và timeout TCP.
+- Giới hạn kích thước JSON, số request đồng thời và timeout TCP.
 - `Cache-Control: no-store` cho phản hồi có dữ liệu phiên.
 
 **Đổi API GET -> POST là thay đổi có chủ ý vì bảo mật; bên gọi API Python cũ cần cập nhật.**

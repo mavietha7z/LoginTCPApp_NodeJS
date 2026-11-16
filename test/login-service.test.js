@@ -12,6 +12,7 @@ const { generateEncryptionKey } = require('../src/crypto/encryption-key');
 const { encodeVarintField, encodeBytesField } = require('../src/protocol/protobuf');
 const { buildPacket, buildFullyEncryptedPacket } = require('../src/protocol/packets');
 
+// Dữ liệu giả dùng chung cho các test; không phải tài khoản hay khóa thật.
 const salt = 'salt-123';
 const verifyCode = 'verify-123';
 const account = 'test@example.com';
@@ -20,6 +21,15 @@ const prepareKey = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
 const sessionKey = Buffer.from('fedcba98765432100123456789abcdef', 'hex');
 const initializationVector = Buffer.from('1032547698badcfe', 'hex');
 
+/**
+ * Dựng frame trả lời giả của máy chủ (command_type = 3).
+ *
+ * @param {number} command - Mã lệnh của reply.
+ * @param {Buffer} body - Body Protobuf.
+ * @param {Buffer|null} [encryptionKey] - Có khóa thì dựng dạng mã hóa toàn bộ, không thì dạng header rõ.
+ * @param {number} [resultCode=0] - Mã kết quả ghi vào field 5 của header.
+ * @returns {Buffer} Frame hoàn chỉnh.
+ */
 function createReplyFrame(command, body, encryptionKey = null, resultCode = 0) {
     const header = Buffer.concat([
         encodeVarintField(1, 285212918),
@@ -32,6 +42,12 @@ function createReplyFrame(command, body, encryptionKey = null, resultCode = 0) {
     return buildFullyEncryptedPacket(packet.subarray(4), encryptionKey, { initializationVector });
 }
 
+/**
+ * Dựng bộ 4 frame trả lời giả cho một lượt đăng nhập: prepare, login, token, sso.
+ *
+ * @param {number} [resultCode=0] - Mã lỗi cho bước LoginPrepare (ví dụ 105 để giả lập CAPTCHA).
+ * @returns {{ prepare: Buffer, login: Buffer, token: Buffer, sso: Buffer }}
+ */
 function buildMockReplyFrames(resultCode = 0) {
     const preparedData = Buffer.concat([encodeBytesField(1, Buffer.from(salt)), encodeBytesField(2, Buffer.from(verifyCode))]);
     const prepareBody = Buffer.concat([
@@ -49,6 +65,10 @@ function buildMockReplyFrames(resultCode = 0) {
     };
 }
 
+/**
+ * Transport giả thay cho `TcpClient`: trả lần lượt các frame prepare, login, token
+ * cho `sendMessage` và luôn trả frame SSO cho `readFrame`. Ghi lại số request và dữ liệu đã ghi.
+ */
 class FakeTransport {
     constructor(replyFrames) {
         this.replyFrames = replyFrames;
@@ -83,7 +103,7 @@ test('the full login sequence parses the mocked server and returns keys', async 
     const result = await loginAndGetKeys(account, password, {
         deviceIdentifier: '123456789012345',
         transportFactory: () => transport,
-        maxRetries: 1,
+        maximumRetries: 1,
     });
     assert.equal(result.code, 0, result.msg);
     assert.equal(result.uid, 123456);
@@ -103,7 +123,7 @@ test('CAPTCHA response 105 is not retried or bypassed', async () => {
             transportCreated += 1;
             return new FakeTransport(buildMockReplyFrames(105));
         },
-        maxRetries: 3,
+        maximumRetries: 3,
     });
     assert.equal(result.code, 105);
     assert.equal(result.attempts, 1);
@@ -112,13 +132,13 @@ test('CAPTCHA response 105 is not retried or bypassed', async () => {
 
 test('HTTP API requires API key, POST, and valid JSON', async (context) => {
     let loginCalls = 0;
-    const config = {
+    const configuration = {
         apiKey: 'very-long-unit-test-secret-is-not-production',
-        maxConcurrentLogins: 2,
-        maxRetries: 1,
+        maximumConcurrentLogins: 2,
+        maximumRetries: 1,
         transportOptions: {},
     };
-    const server = createServer(config, async () => {
+    const server = createServer(configuration, async () => {
         loginCalls += 1;
         return { code: 0, uid: 1234, session_key: 'mock-only' };
     });
@@ -137,7 +157,7 @@ test('HTTP API requires API key, POST, and valid JSON', async (context) => {
     assert.equal(unsupportedGet.status, 404);
     const authorized = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'X-API-Key': config.apiKey, 'Content-Type': 'application/json' },
+        headers: { 'X-API-Key': configuration.apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: account, password }),
     });
     assert.equal(authorized.status, 200);
@@ -157,7 +177,7 @@ test('TCP reader reassembles a packet whose 4-byte header arrives in pieces', as
     const client = new TcpClient({
         serverHost: '127.0.0.1',
         serverPort: server.address().port,
-        readTimeoutMs: 1000,
+        readTimeoutMilliseconds: 1000,
     });
     context.after(() => {
         client.close();
@@ -229,13 +249,13 @@ test('end-to-end login works against a local TCP protocol simulator', async (con
     await new Promise((resolve) => simulator.listen(0, '127.0.0.1', resolve));
     context.after(() => new Promise((resolve) => simulator.close(resolve)));
     const result = await loginAndGetKeys(account, password, {
-        maxRetries: 1,
+        maximumRetries: 1,
         deviceIdentifier: '123456789012345',
         transportOptions: {
             serverHost: '127.0.0.1',
             serverPort: simulator.address().port,
-            readTimeoutMs: 1000,
-            connectTimeoutMs: 1000,
+            readTimeoutMilliseconds: 1000,
+            connectTimeoutMilliseconds: 1000,
         },
     });
     assert.equal(result.code, 0, result.msg);

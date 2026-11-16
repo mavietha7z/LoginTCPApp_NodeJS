@@ -2,7 +2,7 @@
 
 Chuyển đổi từ file `LoginTCPApp.py` gốc sang Node.js **CommonJS, Node >= 22**, giữ nguyên wire format Protobuf, custom XTEA và trình tự command TCP. Không cần cài thư viện npm bên ngoài.
 
-**Trạng thái kiểm thử:** 14/14 test offline PASS; 150/150 vector XTEA ngẫu nhiên đối chiếu Python PASS; 4 loại packet đối chiếu Python khớp từng byte. **Chưa xác minh đăng nhập trên máy chủ thật**. Sử dụng cho tài khoản và dịch vụ mà bạn được phép truy cập; không tự động bỏ qua CAPTCHA hoặc các giới hạn xác thực.
+**Trạng thái kiểm thử:** 14/14 test offline đạt; 150/150 vector XTEA ngẫu nhiên khớp với Python; 4 loại packet khớp từng byte với Python. **Chưa xác minh đăng nhập trên máy chủ thật**. Sử dụng cho tài khoản và dịch vụ mà bạn được phép truy cập; không tự động bỏ qua CAPTCHA hoặc các giới hạn xác thực.
 
 ## Cấu trúc
 
@@ -15,26 +15,26 @@ LoginTCPApp_NodeJS/
 ├── README.md
 ├── ANALYSIS.md                         # Phân tích chi tiết file Python
 ├── src/
-│   ├── config.js                       # Kiểm tra biến môi trường
+│   ├── configuration.js                # Đọc và kiểm tra biến môi trường
 │   ├── crypto/
 │   │   ├── xtea-custom.js              # Custom XTEA (đúng thuật toán Python)
 │   │   └── encryption-key.js           # MD5 -> SHA256 -> SHA256
 │   ├── protocol/
 │   │   ├── protobuf.js                 # Wire types 0,1,2,5; varint 64 bit
-│   │   ├── packets.js                  # Framing và nhận diện packet được mã hóa
+│   │   ├── packets.js                  # Đóng gói frame và nhận diện packet mã hóa
 │   │   ├── requests.js                 # 256, 257, 277, 278, 511, 276, 442, 342
-│   │   ├── responses.js                # Đọc kết quả và decrypt reply
+│   │   ├── responses.js                # Đọc kết quả và giải mã reply
 │   │   └── system-errors.json          # 78 mã lỗi trích nguyên từ Python
 │   ├── transport/
-│   │   └── tcp-client.js               # TCP stream, partial reads, SOCKS5/SOCKS5h
+│   │   └── tcp-client.js               # Đọc stream TCP theo frame, SOCKS5/SOCKS5h
 │   └── services/
 │       └── login-service.js            # LoginPrepare -> Login -> Token -> SSO
 └── test/
-    ├── protocol.test.js                # Parity XTEA + Protobuf + packet
-    ├── login-service.test.js           # Server mock, SOCKS5 mock, HTTP auth
+    ├── protocol.test.js                # Đối chiếu XTEA, Protobuf, packet với Python
+    ├── login-service.test.js           # Máy chủ giả, SOCKS5 giả, xác thực HTTP
     └── fixtures/
-        ├── python-vectors.json         # Vector mã hóa do Python sinh
-        └── python-packets.json         # Packet do Python sinh
+        ├── python-vectors.json         # Vector mã hóa do Python sinh ra
+        └── python-packets.json         # Packet do Python sinh ra
 ```
 
 ## Cài đặt trên Windows PowerShell
@@ -69,7 +69,7 @@ npm test
 npm start
 ```
 
-Mặc định API nghe tại `http://127.0.0.1:5000`. Kiểm tra hoạt động:
+Mặc định API lắng nghe tại `http://127.0.0.1:5000`. Kiểm tra hoạt động:
 
 ```powershell
 Invoke-RestMethod -Uri 'http://127.0.0.1:5000/health'
@@ -123,29 +123,29 @@ Ví dụ một mã lỗi:
 { "code": 105, "msg": "ERROR_CAPTCHA", "duration": 0.17, "attempts": 1 }
 ```
 
-Hệ thống không cố bỏ qua CAPTCHA. `GET /api/login` đã được bỏ để tránh rò mật khẩu. Các request thiếu API key trả HTTP 401.
+Hệ thống không cố bỏ qua CAPTCHA. `GET /api/login` đã bị bỏ để tránh rò rỉ mật khẩu. Các request thiếu API key trả HTTP 401.
 
 ## Các biến môi trường
 
-| Biến                       | Mặc định         | Mô tả                                                                                                           |
-| -------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------- |
-| `API_KEY`                  | Bắt buộc         | Khóa bảo vệ API, tối thiểu 24 ký tự                                                                             |
-| `HTTP_HOST`                | `127.0.0.1`      | Chỉ cho phép truy cập cục bộ mặc định                                                                           |
-| `HTTP_PORT`                | `5000`           | Cổng API                                                                                                        |
-| `TCP_SERVER_HOST`          | `103.247.205.15` | Địa chỉ có trong Python gốc, chưa xác minh hiện tại                                                             |
-| `TCP_SERVER_PORT`          | `19000`          | Cổng TCP trong Python                                                                                           |
-| `SOCKS_PROXY_URL`          | Trống            | Ví dụ `socks5h://127.0.0.1:1080`                                                                                |
-| `DEVICE_ID`                | Lấy từ MAC máy   | Device ID dưới dạng số thập phân                                                                                |
-| `MAX_RETRIES`              | `3`              | Số lần thử tối đa (không retry CAPTCHA/auth failure)                                                            |
-| `MAX_CONCURRENT_LOGINS`    | `3`              | Giới hạn login song song trong một tiến trình                                                                   |
-| `CONNECT_TIMEOUT_MS`       | `8000`           | Timeout TCP / SOCKS handshake                                                                                   |
-| `READ_TIMEOUT_MS`          | `5000`           | Timeout nhận packet                                                                                             |
-| `MAX_PACKET_BYTES`         | `1048576`        | Chặn packet quá lớn                                                                                             |
-| `RESPONSE_WINDOW_MS`       | `3000`           | Cửa sổ thu SSO reply                                                                                            |
-| `RESPONSE_IDLE_TIMEOUT_MS` | `500`            | Thời gian chờ khi không thấy packet tiếp                                                                        |
-| `XTEA_RANDOM_MODE`         | `legacy`         | `legacy`: tương thích với Python; `cryptographic`: IV ngẫu nhiên mạnh hơn (cần kiểm tra tương thích với server) |
+| Biến                       | Mặc định         | Mô tả                                                                                                         |
+| -------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| `API_KEY`                  | Bắt buộc         | Khóa bảo vệ API, tối thiểu 24 ký tự                                                                           |
+| `HTTP_HOST`                | `127.0.0.1`      | Mặc định chỉ cho phép truy cập cục bộ                                                                         |
+| `HTTP_PORT`                | `5000`           | Cổng API                                                                                                      |
+| `TCP_SERVER_HOST`          | `103.247.205.15` | Địa chỉ có trong Python gốc, chưa xác minh còn hoạt động                                                      |
+| `TCP_SERVER_PORT`          | `19000`          | Cổng TCP trong Python                                                                                         |
+| `SOCKS_PROXY_URL`          | Trống            | Ví dụ `socks5h://127.0.0.1:1080`                                                                              |
+| `DEVICE_ID`                | Lấy từ MAC máy   | Device ID dưới dạng số thập phân                                                                              |
+| `MAX_RETRIES`              | `3`              | Số lần thử tối đa (không thử lại khi gặp CAPTCHA hoặc lỗi xác thực)                                           |
+| `MAX_CONCURRENT_LOGINS`    | `3`              | Giới hạn số lượt đăng nhập song song trong một tiến trình                                                     |
+| `CONNECT_TIMEOUT_MS`       | `8000`           | Thời gian chờ kết nối TCP và bắt tay SOCKS                                                                    |
+| `READ_TIMEOUT_MS`          | `5000`           | Thời gian chờ nhận một packet                                                                                 |
+| `MAX_PACKET_BYTES`         | `1048576`        | Chặn packet quá lớn                                                                                           |
+| `RESPONSE_WINDOW_MS`       | `3000`           | Tổng thời gian chờ nhận phản hồi SSO                                                                          |
+| `RESPONSE_IDLE_TIMEOUT_MS` | `500`            | Thời gian chờ tối đa giữa hai packet liên tiếp                                                                |
+| `XTEA_RANDOM_MODE`         | `legacy`         | `legacy`: tương thích với Python; `cryptographic`: IV ngẫu nhiên mạnh hơn (cần kiểm tra máy chủ có chấp nhận) |
 
-**Device ID:** Python gọi `hash(uuid.getnode())`. Node.js dùng MAC của interface ngoài đầu tiên. Hai giá trị này **không nhất thiết giống nhau** trên máy có nhiều card mạng hoặc khi đổi máy. Để tái lập Python, chạy trên máy Python gốc:
+**Device ID:** Python gọi `hash(uuid.getnode())`. Node.js dùng địa chỉ MAC của card mạng đầu tiên không phải loopback. Hai giá trị này **không nhất thiết giống nhau** trên máy có nhiều card mạng hoặc khi đổi máy. Để có cùng giá trị như Python, chạy lệnh sau trên máy chạy Python gốc:
 
 ```bash
 python -c "import uuid; print(hash(uuid.getnode()))"
@@ -161,7 +161,7 @@ Nếu muốn gọi trực tiếp từ backend Node.js (không mở thêm cổng 
 const { loginAndGetKeys } = require('./src/services/login-service');
 
 const result = await loginAndGetKeys('account-owned-by-you', 'password', {
-    maxRetries: 1,
+    maximumRetries: 1,
     deviceIdentifier: process.env.DEVICE_ID,
     transportOptions: {
         serverHost: process.env.TCP_SERVER_HOST,
@@ -179,6 +179,6 @@ Nên giữ lớp giao tiếp TCP tách riêng khỏi controller nghiệp vụ n�
 2. Chưa xác minh máy chủ `103.247.205.15:19000` còn được vận hành hay không, và các giá trị `client_version`, `client_type` còn được chấp nhận hay không.
 3. Chưa thử qua proxy doanh nghiệp có quy tắc xác thực phức tạp; đã kiểm thử SOCKS5h với proxy giả lập cục bộ.
 4. Chưa kiểm chứng luồng OTP, CAPTCHA hay xác thực bổ sung; mã gốc cũng không triển khai các luồng đó.
-5. Custom XTEA trong mã Python gốc không có kiểm tra xác thực thông điệp hiện đại; tương thích không đồng nghĩa với an toàn mật mã.
+5. Custom XTEA trong mã Python gốc không có cơ chế xác thực toàn vẹn thông điệp hiện đại; tương thích không đồng nghĩa với an toàn mật mã.
 
 Xem `ANALYSIS.md` để biết các lỗi và quyết định chuyển đổi theo từng thành phần Python.
