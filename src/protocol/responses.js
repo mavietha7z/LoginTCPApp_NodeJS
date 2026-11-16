@@ -1,9 +1,7 @@
-'use strict';
-
-const { XteaCustom } = require('../crypto/xtea-custom');
-const { parsePacketPayload } = require('./packets');
-const { convertBigIntForJson, decodeProtobufFields } = require('./protobuf');
-const systemErrorCodes = require('./system-errors.json');
+import { XteaCustom } from '../crypto/xtea-custom.js';
+import { parsePacketPayload } from './packets.js';
+import { convertBigIntForJson, decodeProtobufFields } from './protobuf.js';
+import systemErrorCodes from './system-errors.json' with { type: 'json' };
 
 /**
  * Giải mã các packet máy chủ trả về.
@@ -231,7 +229,7 @@ class SystemResponse {
     }
 }
 
-module.exports = {
+export {
     decodePacket,
     decodeLoginPrepareReply,
     decodeLoginReply,

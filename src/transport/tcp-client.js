@@ -1,7 +1,5 @@
-'use strict';
-
-const dns = require('node:dns/promises');
-const net = require('node:net');
+import dns from 'node:dns/promises';
+import net from 'node:net';
 
 /**
  * Lớp kết nối TCP tới máy chủ đăng nhập, có hỗ trợ SOCKS5/SOCKS5h.
@@ -449,4 +447,4 @@ class TcpClient {
     }
 }
 
-module.exports = { TcpClient, TimeoutError };
+export { TcpClient, TimeoutError };

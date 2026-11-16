@@ -1,7 +1,5 @@
-'use strict';
-
-const { XteaCustom } = require('../crypto/xtea-custom');
-const { decodePacketHeader } = require('./protobuf');
+import { XteaCustom } from '../crypto/xtea-custom.js';
+import { decodePacketHeader } from './protobuf.js';
 
 /**
  * Đóng gói (framing) packet TCP. Có hai dạng packet:
@@ -103,7 +101,7 @@ function parsePacketPayload(payloadBytes, encryptionKey = null) {
     }
 }
 
-module.exports = {
+export {
     buildPacket,
     buildFullyEncryptedPacket,
     parsePacketPayload,

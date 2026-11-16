@@ -1,6 +1,6 @@
 # LoginTCPApp — phiên bản Node.js
 
-Chuyển đổi từ file `LoginTCPApp.py` gốc sang Node.js **CommonJS, Node >= 22**, giữ nguyên wire format Protobuf, custom XTEA và trình tự command TCP. Không cần cài thư viện npm bên ngoài.
+Chuyển đổi từ file `LoginTCPApp.py` gốc sang Node.js **ES Module, Node >= 22.12**, giữ nguyên wire format Protobuf, custom XTEA và trình tự command TCP. Không cần cài thư viện npm bên ngoài.
 
 **Trạng thái kiểm thử:** 14/14 test offline đạt; 150/150 vector XTEA ngẫu nhiên khớp với Python; 4 loại packet khớp từng byte với Python. **Chưa xác minh đăng nhập trên máy chủ thật**. Sử dụng cho tài khoản và dịch vụ mà bạn được phép truy cập; không tự động bỏ qua CAPTCHA hoặc các giới hạn xác thực.
 
@@ -39,7 +39,7 @@ LoginTCPApp_NodeJS/
 
 ## Cài đặt trên Windows PowerShell
 
-Bạn cần cài **Node.js 22 hoặc mới hơn**.
+Bạn cần cài **Node.js 22.12 hoặc mới hơn** (cần cho `import` file JSON không kèm cảnh báo).
 
 ```powershell
 node --version
@@ -158,7 +158,7 @@ Sao chép kết quả số thập phân vào `DEVICE_ID=...` của `.env`. Đây
 Nếu muốn gọi trực tiếp từ backend Node.js (không mở thêm cổng HTTP), sử dụng:
 
 ```js
-const { loginAndGetKeys } = require('./src/services/login-service');
+import { loginAndGetKeys } from './src/services/login-service.js';
 
 const result = await loginAndGetKeys('account-owned-by-you', 'password', {
     maximumRetries: 1,

@@ -1,16 +1,15 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const http = require('node:http');
-const net = require('node:net');
-const { loginAndGetKeys } = require('../src/services/login-service');
-const { createServer } = require('../server');
-const { TcpClient } = require('../src/transport/tcp-client');
-const { XteaCustom } = require('../src/crypto/xtea-custom');
-const { generateEncryptionKey } = require('../src/crypto/encryption-key');
-const { encodeVarintField, encodeBytesField } = require('../src/protocol/protobuf');
-const { buildPacket, buildFullyEncryptedPacket } = require('../src/protocol/packets');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import net from 'node:net';
+import { loginAndGetKeys } from '../src/services/login-service.js';
+import { createServer } from '../server.js';
+import { TcpClient } from '../src/transport/tcp-client.js';
+import { XteaCustom } from '../src/crypto/xtea-custom.js';
+import { generateEncryptionKey } from '../src/crypto/encryption-key.js';
+import { encodeVarintField, encodeBytesField } from '../src/protocol/protobuf.js';
+import { buildPacket, buildFullyEncryptedPacket } from '../src/protocol/packets.js';
+import { decodePacket } from '../src/protocol/responses.js';
 
 // Dữ liệu giả dùng chung cho các test; không phải tài khoản hay khóa thật.
 const salt = 'salt-123';
@@ -230,7 +229,6 @@ test('end-to-end login works against a local TCP protocol simulator', async (con
                 if (receivedBytes.length < packetLength + 4) break;
                 const incomingPacket = Buffer.from(receivedBytes.subarray(0, packetLength + 4));
                 receivedBytes = Buffer.from(receivedBytes.subarray(packetLength + 4));
-                const { decodePacket } = require('../src/protocol/responses');
                 const parsedPacket = decodePacket(incomingPacket, sessionKey);
                 receivedCommands.push(parsedPacket.header.command);
                 if (parsedPacket.header.command === 256) {

@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Đọc và kiểm tra cấu hình từ biến môi trường (xem `.env.example` và bảng biến trong README).
  * Tên biến môi trường giữ nguyên dạng `*_MS`, `MAX_*` để tương thích với file `.env` đã có.
@@ -81,4 +79,4 @@ function loadConfiguration() {
     };
 }
 
-module.exports = { loadConfiguration };
+export { loadConfiguration };

@@ -1,15 +1,13 @@
-'use strict';
-
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const { XteaCustom, createLegacyInitializationVector } = require('../src/crypto/xtea-custom');
-const { generateEncryptionKey } = require('../src/crypto/encryption-key');
-const { encodeVarint, decodeVarint, encodeVarintField, encodeBytesField, decodeProtobufFields } = require('../src/protocol/protobuf');
-const { LoginPrepareRequest, LoginRequest, LoginTokenGetRequest, EmptyPacket } = require('../src/protocol/requests');
-const { buildPacket, buildFullyEncryptedPacket } = require('../src/protocol/packets');
-const { decodePacket } = require('../src/protocol/responses');
-const cipherFixtures = require('./fixtures/python-vectors.json');
-const packetFixtures = require('./fixtures/python-packets.json');
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { XteaCustom, createLegacyInitializationVector } from '../src/crypto/xtea-custom.js';
+import { generateEncryptionKey } from '../src/crypto/encryption-key.js';
+import { encodeVarint, decodeVarint, encodeVarintField, encodeBytesField, decodeProtobufFields } from '../src/protocol/protobuf.js';
+import { LoginPrepareRequest, LoginRequest, LoginTokenGetRequest, EmptyPacket } from '../src/protocol/requests.js';
+import { buildPacket, buildFullyEncryptedPacket } from '../src/protocol/packets.js';
+import { decodePacket } from '../src/protocol/responses.js';
+import cipherFixtures from './fixtures/python-vectors.json' with { type: 'json' };
+import packetFixtures from './fixtures/python-packets.json' with { type: 'json' };
 
 const cipherKey = Buffer.from(cipherFixtures.encryption_key_hex, 'hex');
 const fixedInitializationVector = Buffer.from(cipherFixtures.initialization_vector_hex, 'hex');

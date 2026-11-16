@@ -1,10 +1,10 @@
-'use strict';
+import { timingSafeEqual } from 'node:crypto';
+import http from 'node:http';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const { timingSafeEqual } = require('node:crypto');
-const http = require('node:http');
-
-const { loadConfiguration } = require('./src/configuration');
-const { loginAndGetKeys } = require('./src/services/login-service');
+import { loadConfiguration } from './src/configuration.js';
+import { loginAndGetKeys } from './src/services/login-service.js';
 
 /**
  * HTTP API bọc dịch vụ đăng nhập. Thay cho route Flask `GET /api/login` trong `LoginTCPApp.py`
@@ -181,8 +181,10 @@ function createServer(configuration, loginService = loginAndGetKeys) {
     return server;
 }
 
-// Chỉ khởi động server khi chạy trực tiếp `node server.js`, không chạy khi được `require` trong test.
-if (require.main === module) {
+// Chỉ khởi động server khi chạy trực tiếp `node server.js`, không chạy khi được `import` trong test.
+// So sánh đường dẫn file đang chạy (process.argv[1]) với đường dẫn của chính module này.
+const isRunDirectly = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isRunDirectly) {
     try {
         const configuration = loadConfiguration();
         const server = createServer(configuration);
@@ -197,4 +199,4 @@ if (require.main === module) {
     }
 }
 
-module.exports = { createServer, isApiKeyMatchingInConstantTime, readJsonBody };
+export { createServer, isApiKeyMatchingInConstantTime, readJsonBody };

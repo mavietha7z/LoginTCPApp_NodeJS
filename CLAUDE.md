@@ -13,10 +13,11 @@ Quy ước code:
 - Không lồng nhiều lệnh gọi trên một dòng; tách thành biến trung gian có tên rõ nghĩa.
 - Giữ nguyên các tên thuộc hợp đồng bên ngoài: biến môi trường (`MAX_RETRIES`, `*_MS`…), key JSON trả về (`uid`, `session_key`, `sso_key`, `msg`, `SsoKeyGetReply`), key đối chiếu Python (`encrypt_key`, `verify_code`, `message_type`, `command_type`), và hàm `loginAndGetKeys`.
 - Thông báo lỗi (`new Error(...)`) giữ tiếng Anh vì một số được trả thẳng ra API và test có so khớp.
+- ES Module: dùng `import`/`export` có tên (không default export); đường dẫn nội bộ phải ghi đủ đuôi `.js`; file JSON nạp bằng `import ... with { type: 'json' }`. Không có `require`, `module.exports`, `__dirname`.
 
 ## Tổng quan
 
-Bản port Node.js (CommonJS, Node >= 22, **không có dependency npm**) của `LoginTCPApp.py`. Ứng dụng đăng nhập vào một máy chủ TCP dùng Protobuf tự viết + custom XTEA, lấy `uid`, `session_key`, `sso_key`, và mở HTTP API `POST /api/login`. `LoginTCPApp.py` là **nguồn tham chiếu gốc**, không chạy trong dự án — dùng để đối chiếu hành vi. `ANALYSIS.md` ghi lại phân tích từng class Python (kèm số dòng) và các lỗi đã sửa khi port.
+Bản port Node.js (**ES Module** — `"type": "module"`, Node >= 22.12, **không có dependency npm**) của `LoginTCPApp.py`. Ứng dụng đăng nhập vào một máy chủ TCP dùng Protobuf tự viết + custom XTEA, lấy `uid`, `session_key`, `sso_key`, và mở HTTP API `POST /api/login`. `LoginTCPApp.py` là **nguồn tham chiếu gốc**, không chạy trong dự án — dùng để đối chiếu hành vi. `ANALYSIS.md` ghi lại phân tích từng class Python (kèm số dòng) và các lỗi đã sửa khi port.
 
 Là git repo (remote `origin` trên GitHub, nhánh `main`).
 

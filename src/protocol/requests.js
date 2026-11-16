@@ -1,11 +1,9 @@
-'use strict';
+import { createHash, randomBytes } from 'node:crypto';
+import { networkInterfaces } from 'node:os';
 
-const { createHash, randomBytes } = require('node:crypto');
-const { networkInterfaces } = require('node:os');
-
-const { XteaCustom } = require('../crypto/xtea-custom');
-const { buildFullyEncryptedPacket, buildPacket } = require('./packets');
-const { encodeBytesField, encodeVarintField } = require('./protobuf');
+import { XteaCustom } from '../crypto/xtea-custom.js';
+import { buildFullyEncryptedPacket, buildPacket } from './packets.js';
+import { encodeBytesField, encodeVarintField } from './protobuf.js';
 
 /**
  * Các lớp dựng packet gửi lên máy chủ, tương ứng các lớp request trong `LoginTCPApp.py`
@@ -292,7 +290,7 @@ class EmptyPacket extends BaseLoginRequest {
     }
 }
 
-module.exports = {
+export {
     discoverDeviceIdentifier,
     BaseLoginRequest,
     LoginPrepareRequest,

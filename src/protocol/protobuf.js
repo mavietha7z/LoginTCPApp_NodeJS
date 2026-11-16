@@ -1,5 +1,3 @@
-'use strict';
-
 /**
  * Bộ mã hóa/giải mã Protobuf tối giản, tự viết (không dùng file .proto).
  * Tương ứng `BaseProtobufDecoder` (dòng 18–95) và `ProtoUtils` (dòng 352–368) trong `LoginTCPApp.py`.
@@ -224,7 +222,7 @@ function decodePacketHeader(headerBytes) {
     return header;
 }
 
-module.exports = {
+export {
     encodeVarint,
     decodeVarint,
     encodeVarintField,

@@ -1,6 +1,4 @@
-'use strict';
-
-const { randomBytes } = require('node:crypto');
+import { randomBytes } from 'node:crypto';
 
 /**
  * Cài đặt XTEA tùy biến, chuyển nguyên từ lớp `XTEACBC` trong `LoginTCPApp.py` (dòng 136–349).
@@ -341,7 +339,7 @@ class XteaCustom {
     }
 }
 
-module.exports = {
+export {
     XteaCustom,
     Lrand48,
     createLegacyInitializationVector,

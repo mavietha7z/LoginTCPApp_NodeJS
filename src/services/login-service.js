@@ -1,17 +1,15 @@
-'use strict';
+import { performance } from 'node:perf_hooks';
 
-const { performance } = require('node:perf_hooks');
-
-const { generateEncryptionKey } = require('../crypto/encryption-key');
-const { EmptyPacket, LoginPrepareRequest, LoginRequest, LoginTokenGetRequest } = require('../protocol/requests');
-const {
+import { generateEncryptionKey } from '../crypto/encryption-key.js';
+import { EmptyPacket, LoginPrepareRequest, LoginRequest, LoginTokenGetRequest } from '../protocol/requests.js';
+import {
     decodeLoginPrepareReplyData,
     decodeLoginReplyData,
     decodePacket,
     decryptResponseData,
     SystemResponse,
-} = require('../protocol/responses');
-const { TcpClient, TimeoutError } = require('../transport/tcp-client');
+} from '../protocol/responses.js';
+import { TcpClient, TimeoutError } from '../transport/tcp-client.js';
 
 /**
  * Điều phối toàn bộ luồng đăng nhập TCP và lấy SSO key.
@@ -257,4 +255,4 @@ async function loginAndGetKeys(account, password, options = {}) {
     return buildErrorResult(lastErrorCode, lastErrorMessage, startTime, attemptCount);
 }
 
-module.exports = { loginAndGetKeys };
+export { loginAndGetKeys };

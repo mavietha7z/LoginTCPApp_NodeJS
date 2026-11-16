@@ -1,6 +1,4 @@
-'use strict';
-
-const { createHash } = require('node:crypto');
+import { createHash } from 'node:crypto';
 
 /**
  * Sinh khóa XTEA 16 byte dùng cho bước Login (command 257).
@@ -40,4 +38,4 @@ function generateEncryptionKey(password, salt, verifyCode) {
         .subarray(0, 16);
 }
 
-module.exports = { generateEncryptionKey };
+export { generateEncryptionKey };
