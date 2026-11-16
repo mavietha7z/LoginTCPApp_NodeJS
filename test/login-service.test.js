@@ -1,33 +1,35 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import http from 'node:http';
 import net from 'node:net';
-import { loginAndGetKeys } from '../src/services/login-service.js';
+import test from 'node:test';
+import http from 'node:http';
+import assert from 'node:assert/strict';
 import { createServer } from '../server.js';
-import { TcpClient } from '../src/transport/tcp-client.js';
 import { XteaCustom } from '../src/crypto/xtea-custom.js';
+import { TcpClient } from '../src/transport/tcp-client.js';
+import { decodePacket } from '../src/protocol/responses.js';
+import { loginAndGetKeys } from '../src/services/login-service.js';
 import { generateEncryptionKey } from '../src/crypto/encryption-key.js';
 import { encodeVarintField, encodeBytesField } from '../src/protocol/protobuf.js';
 import { buildPacket, buildFullyEncryptedPacket } from '../src/protocol/packets.js';
-import { decodePacket } from '../src/protocol/responses.js';
 
-// Dữ liệu giả dùng chung cho các test; không phải tài khoản hay khóa thật.
+/*
+ * Dữ liệu giả dùng chung cho các test; không phải tài khoản hay khóa thật.
+ */
 const salt = 'salt-123';
 const verifyCode = 'verify-123';
 const account = 'test@example.com';
 const password = 'example-password';
+const initializationVector = Buffer.from('1032547698badcfe', 'hex');
 const prepareKey = Buffer.from('00112233445566778899aabbccddeeff', 'hex');
 const sessionKey = Buffer.from('fedcba98765432100123456789abcdef', 'hex');
-const initializationVector = Buffer.from('1032547698badcfe', 'hex');
 
 /**
  * Dựng frame trả lời giả của máy chủ (command_type = 3).
  *
- * @param {number} command - Mã lệnh của reply.
- * @param {Buffer} body - Body Protobuf.
- * @param {Buffer|null} [encryptionKey] - Có khóa thì dựng dạng mã hóa toàn bộ, không thì dạng header rõ.
- * @param {number} [resultCode=0] - Mã kết quả ghi vào field 5 của header.
- * @returns {Buffer} Frame hoàn chỉnh.
+ * - `command` (number): Mã lệnh của reply.
+ * - `body` (Buffer): Body Protobuf.
+ * - `encryptionKey` (Buffer|null, không bắt buộc): Có khóa thì dựng dạng mã hóa toàn bộ, không thì dạng header rõ.
+ * - `resultCode` (number, mặc định 0): Mã kết quả ghi vào field 5 của header.
+ * - Trả về (Buffer): Frame hoàn chỉnh.
  */
 function createReplyFrame(command, body, encryptionKey = null, resultCode = 0) {
     const header = Buffer.concat([
@@ -44,8 +46,8 @@ function createReplyFrame(command, body, encryptionKey = null, resultCode = 0) {
 /**
  * Dựng bộ 4 frame trả lời giả cho một lượt đăng nhập: prepare, login, token, sso.
  *
- * @param {number} [resultCode=0] - Mã lỗi cho bước LoginPrepare (ví dụ 105 để giả lập CAPTCHA).
- * @returns {{ prepare: Buffer, login: Buffer, token: Buffer, sso: Buffer }}
+ * - `resultCode` (number, mặc định 0): Mã lỗi cho bước LoginPrepare (ví dụ 105 để giả lập CAPTCHA).
+ * - Trả về (object): Các frame dạng { prepare: Buffer, login: Buffer, token: Buffer, sso: Buffer }.
  */
 function buildMockReplyFrames(resultCode = 0) {
     const preparedData = Buffer.concat([encodeBytesField(1, Buffer.from(salt)), encodeBytesField(2, Buffer.from(verifyCode))]);

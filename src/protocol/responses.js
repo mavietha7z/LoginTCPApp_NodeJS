@@ -1,21 +1,23 @@
-import { XteaCustom } from '../crypto/xtea-custom.js';
 import { parsePacketPayload } from './packets.js';
-import { convertBigIntForJson, decodeProtobufFields } from './protobuf.js';
+import { XteaCustom } from '../crypto/xtea-custom.js';
 import systemErrorCodes from './system-errors.json' with { type: 'json' };
+import { convertBigIntForJson, decodeProtobufFields } from './protobuf.js';
 
 /**
  * Giải mã các packet máy chủ trả về.
  * Tương ứng `SystemResponse` (dòng 616–629) và `PacketReceiver` (dòng 632–748) trong `LoginTCPApp.py`.
  */
 
-/** Bộ giải mã UTF-8 chế độ nghiêm ngặt: ném lỗi khi gặp byte không hợp lệ thay vì thay bằng ký tự lỗi. */
+/**
+ * Bộ giải mã UTF-8 chế độ nghiêm ngặt: ném lỗi khi gặp byte không hợp lệ thay vì thay bằng ký tự lỗi.
+ */
 const strictUtf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
 /**
  * Giải mã buffer thành chuỗi UTF-8; nếu không phải UTF-8 hợp lệ thì trả về chuỗi hex.
  *
- * @param {Buffer} inputBuffer - Dữ liệu cần giải mã.
- * @returns {string} Chuỗi UTF-8 hoặc chuỗi hex.
+ * - `inputBuffer` (Buffer): Dữ liệu cần giải mã.
+ * - Trả về (string): Chuỗi UTF-8 hoặc chuỗi hex.
  */
 function decodeUtf8TextOrHexadecimal(inputBuffer) {
     try {
@@ -28,23 +30,23 @@ function decodeUtf8TextOrHexadecimal(inputBuffer) {
 /**
  * Lấy giá trị của một field kiểu bytes (wire type 2).
  *
- * @param {Map<number, {wireType: number, value: *}>} fields - Kết quả từ `decodeProtobufFields`.
- * @param {number} fieldNumber - Số thứ tự field.
- * @param {boolean} [required=false] - Ném lỗi nếu field không tồn tại.
- * @returns {Buffer|null} Giá trị field, hoặc null nếu không có và không bắt buộc.
- * @throws {Error} Khi field bắt buộc bị thiếu hoặc field không phải kiểu bytes.
+ * - `fields` (Map<number, {wireType: number, value: *}>): Kết quả từ `decodeProtobufFields`.
+ * - `fieldNumber` (number): Số thứ tự field.
+ * - `required` (boolean, mặc định false): Ném lỗi nếu field không tồn tại.
+ * - Trả về (Buffer|null): Giá trị field, hoặc null nếu không có và không bắt buộc.
+ * - Ném lỗi Error: Khi field bắt buộc bị thiếu hoặc field không phải kiểu bytes.
  */
 function getBytesField(fields, fieldNumber, required = false) {
     const field = fields.get(fieldNumber);
     if (!field) {
         if (required) {
-            throw new Error(`Response is missing protobuf field ${fieldNumber}`);
+            throw new Error(`Response Protobuf thiếu field ${fieldNumber}`);
         }
         return null;
     }
 
     if (field.wireType !== 2) {
-        throw new Error(`Response protobuf field ${fieldNumber} is not bytes`);
+        throw new Error(`Response Protobuf field ${fieldNumber} không phải kiểu bytes`);
     }
 
     return field.value;
@@ -53,8 +55,8 @@ function getBytesField(fields, fieldNumber, required = false) {
 /**
  * Giải mã body LoginPrepareReply: field 1 = khóa mã hóa, field 2 = dữ liệu đã mã hóa.
  *
- * @param {Buffer} bodyBytes - Body Protobuf.
- * @returns {{ encrypt_key?: string, data?: string }} Các giá trị dạng hex (chỉ có khi field tồn tại).
+ * - `bodyBytes` (Buffer): Body Protobuf.
+ * - Trả về ({ encrypt_key?: string, data?: string }): Các giá trị dạng hex (chỉ có khi field tồn tại).
  */
 function decodeLoginPrepareReply(bodyBytes) {
     const fields = decodeProtobufFields(bodyBytes);
@@ -73,8 +75,8 @@ function decodeLoginPrepareReply(bodyBytes) {
 /**
  * Giải mã body LoginReply: field 1 = dữ liệu đã mã hóa.
  *
- * @param {Buffer} bodyBytes - Body Protobuf.
- * @returns {{ data?: string }} Dữ liệu dạng hex (chỉ có khi field tồn tại).
+ * - `bodyBytes` (Buffer): Body Protobuf.
+ * - Trả về ({ data?: string }): Dữ liệu dạng hex (chỉ có khi field tồn tại).
  */
 function decodeLoginReply(bodyBytes) {
     const fields = decodeProtobufFields(bodyBytes);
@@ -84,8 +86,8 @@ function decodeLoginReply(bodyBytes) {
 /**
  * Giải mã body SsoKeyGetReply: field 1 = SSO key.
  *
- * @param {Buffer} bodyBytes - Body Protobuf.
- * @returns {{ sso_key: string|null }} SSO key dạng chuỗi UTF-8 (hoặc hex), null nếu không có.
+ * - `bodyBytes` (Buffer): Body Protobuf.
+ * - Trả về ({ sso_key: string|null }): SSO key dạng chuỗi UTF-8 (hoặc hex), null nếu không có.
  */
 function decodeSsoKeyGetReply(bodyBytes) {
     const fields = decodeProtobufFields(bodyBytes);
@@ -97,9 +99,9 @@ function decodeSsoKeyGetReply(bodyBytes) {
 /**
  * Giải mã phần dữ liệu đã mã hóa trong reply bằng XTEA tùy biến.
  *
- * @param {Buffer|string} encryptionKey - Khóa 16 byte (Buffer hoặc chuỗi hex).
- * @param {Buffer|string} ciphertext - Bản mã (Buffer hoặc chuỗi hex).
- * @returns {Buffer} Dữ liệu đã giải mã.
+ * - `encryptionKey` (Buffer|string): Khóa 16 byte (Buffer hoặc chuỗi hex).
+ * - `ciphertext` (Buffer|string): Bản mã (Buffer hoặc chuỗi hex).
+ * - Trả về (Buffer): Dữ liệu đã giải mã.
  */
 function decryptResponseData(encryptionKey, ciphertext) {
     const keyBuffer = Buffer.isBuffer(encryptionKey) ? encryptionKey : Buffer.from(encryptionKey, 'hex');
@@ -111,8 +113,8 @@ function decryptResponseData(encryptionKey, ciphertext) {
 /**
  * Đọc dữ liệu LoginPrepareReply sau khi giải mã: field 1 = salt, field 2 = verify_code.
  *
- * @param {Buffer} plaintextData - Dữ liệu đã giải mã.
- * @returns {{ salt: string, verify_code: string }} Chuỗi rỗng nếu field không tồn tại.
+ * - `plaintextData` (Buffer): Dữ liệu đã giải mã.
+ * - Trả về ({ salt: string, verify_code: string }): Chuỗi rỗng nếu field không tồn tại.
  */
 function decodeLoginPrepareReplyData(plaintextData) {
     const fields = decodeProtobufFields(plaintextData);
@@ -128,8 +130,8 @@ function decodeLoginPrepareReplyData(plaintextData) {
 /**
  * Đọc dữ liệu LoginReply sau khi giải mã: field 1 = uid, field 2 = session key 16 byte.
  *
- * @param {Buffer} plaintextData - Dữ liệu đã giải mã.
- * @returns {{ uid?: number|string|null, session_key?: string }}
+ * - `plaintextData` (Buffer): Dữ liệu đã giải mã.
+ * - Trả về (object) dạng { uid?: number|string|null, session_key?: string }:
  *   uid là số (hoặc chuỗi nếu quá lớn / là bytes); session_key dạng hex.
  */
 function decodeLoginReplyData(plaintextData) {
@@ -163,19 +165,19 @@ function decodeLoginReplyData(plaintextData) {
  *   - SsoKeyGetReply:    command_type 3 hoặc 4, command 274, 294 hoặc 442
  * Các trường hợp khác (hoặc body rỗng) trả về `UNKNOWN` với body rỗng.
  *
- * @param {Buffer} framedPacket - Frame gồm 4 byte độ dài + payload.
- * @param {Buffer|null} [encryptionKey] - Session key để giải mã packet dạng mã hóa toàn bộ.
- * @returns {{ header: object, message_type: string, body: object }} Kết quả giải mã.
- * @throws {Error} Khi frame quá ngắn, độ dài khai báo không khớp hoặc không phân tích được.
+ * - `framedPacket` (Buffer): Frame gồm 4 byte độ dài + payload.
+ * - `encryptionKey` (Buffer|null, không bắt buộc): Session key để giải mã packet dạng mã hóa toàn bộ.
+ * - Trả về ({ header: object, message_type: string, body: object }): Kết quả giải mã.
+ * - Ném lỗi Error: Khi frame quá ngắn, độ dài khai báo không khớp hoặc không phân tích được.
  */
 function decodePacket(framedPacket, encryptionKey = null) {
     if (!Buffer.isBuffer(framedPacket) || framedPacket.length < 6) {
-        throw new Error('TCP packet is too short');
+        throw new Error('Frame TCP quá ngắn');
     }
 
     const declaredPayloadLength = framedPacket.readUInt32LE(0);
     if (declaredPayloadLength !== framedPacket.length - 4) {
-        throw new Error('TCP packet framing length mismatch');
+        throw new Error('Độ dài framing của packet TCP không khớp');
     }
 
     const payloadBytes = framedPacket.subarray(4);
@@ -209,20 +211,26 @@ function decodePacket(framedPacket, encryptionKey = null) {
  */
 class SystemResponse {
     /**
-     * @param {{ header: object, body: object, message_type: string }} decodedPacket - Kết quả từ `decodePacket`.
+     * - `decodedPacket` ({ header: object, body: object, message_type: string }): Kết quả từ `decodePacket`.
      */
     constructor(decodedPacket) {
         this.header = decodedPacket.header;
         this.body = decodedPacket.body;
         this.messageType = decodedPacket.message_type;
-        // Không có field `result` dạng số thì coi là lỗi -1.
+
+        /*
+         * Không có field `result` dạng số thì coi là lỗi -1.
+         */
         this.code = typeof this.header.result === 'number' ? this.header.result : -1;
-        // Tên lỗi lấy từ bảng `system-errors.json` (ví dụ 105 -> ERROR_CAPTCHA).
+
+        /*
+         * Tên lỗi lấy từ bảng `system-errors.json` (ví dụ 105 -> ERROR_CAPTCHA).
+         */
         this.message = systemErrorCodes[this.code] || 'UNKNOWN_ERROR';
     }
 
     /**
-     * @returns {boolean} true khi mã kết quả là 0 (SUCCESS).
+     * - Trả về (boolean): true khi mã kết quả là 0 (SUCCESS).
      */
     isSuccess() {
         return this.code === 0;
@@ -231,12 +239,12 @@ class SystemResponse {
 
 export {
     decodePacket,
-    decodeLoginPrepareReply,
-    decodeLoginReply,
-    decodeSsoKeyGetReply,
-    decodeLoginPrepareReplyData,
-    decodeLoginReplyData,
-    decryptResponseData,
     SystemResponse,
+    decodeLoginReply,
     systemErrorCodes,
+    decryptResponseData,
+    decodeSsoKeyGetReply,
+    decodeLoginReplyData,
+    decodeLoginPrepareReply,
+    decodeLoginPrepareReplyData,
 };

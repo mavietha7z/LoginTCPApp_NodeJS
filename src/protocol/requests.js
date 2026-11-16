@@ -1,19 +1,24 @@
-import { createHash, randomBytes } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { XteaCustom } from '../crypto/xtea-custom.js';
-import { buildFullyEncryptedPacket, buildPacket } from './packets.js';
 import { encodeBytesField, encodeVarintField } from './protobuf.js';
+import { buildFullyEncryptedPacket, buildPacket } from './packets.js';
 
 /**
  * Các lớp dựng packet gửi lên máy chủ, tương ứng các lớp request trong `LoginTCPApp.py`
  * (dòng 371–523). Byte sinh ra phải khớp tuyệt đối với `test/fixtures/python-packets.json`.
  */
 
-/** Phiên bản giao thức ghi vào field 1 của header. */
-const PROTOCOL_VERSION = 285212918;
-/** command_type của packet client gửi lên (máy chủ trả về 3 hoặc 4). */
+/**
+ * command_type của packet client gửi lên (máy chủ trả về 3 hoặc 4).
+ */
 const CLIENT_COMMAND_TYPE = 2;
+
+/**
+ * Phiên bản giao thức ghi vào field 1 của header.
+ */
+const PROTOCOL_VERSION = 285212918;
 
 /**
  * Xác định device ID ghi vào header (field 2) và body bước Login (field 4).
@@ -23,14 +28,14 @@ const CLIENT_COMMAND_TYPE = 2;
  *   2. Địa chỉ MAC của card mạng đầu tiên không phải loopback, đổi sang số thập phân.
  * Python dùng `hash(uuid.getnode())`, có thể chọn card mạng khác nên kết quả có thể khác.
  *
- * @returns {string} Device ID dạng chuỗi số thập phân.
- * @throws {Error} Khi `DEVICE_ID` không hợp lệ hoặc không tìm được địa chỉ MAC.
+ * - Trả về (string): Device ID dạng chuỗi số thập phân.
+ * - Ném lỗi Error: Khi `DEVICE_ID` không hợp lệ hoặc không tìm được địa chỉ MAC.
  */
 function discoverDeviceIdentifier() {
     const configuredValue = process.env.DEVICE_ID;
     if (configuredValue) {
         if (!/^\d+$/.test(configuredValue)) {
-            throw new Error('DEVICE_ID must contain only decimal digits');
+            throw new Error('DEVICE_ID chỉ được chứa chữ số thập phân');
         }
         return configuredValue;
     }
@@ -38,10 +43,12 @@ function discoverDeviceIdentifier() {
     const networkDevices = Object.values(networkInterfaces()).flat().filter(Boolean);
     const candidate = networkDevices.find((device) => !device.internal && device.mac && device.mac !== '00:00:00:00:00:00');
     if (!candidate) {
-        throw new Error('Cannot determine DEVICE_ID; set DEVICE_ID from the original Python host');
+        throw new Error('Không thể xác định DEVICE_ID; hãy thiết lập DEVICE_ID từ máy chủ Python gốc');
     }
 
-    // MAC "aa:bb:cc:dd:ee:ff" -> số nguyên 0xaabbccddeeff -> chuỗi thập phân.
+    /*
+     * MAC "aa:bb:cc:dd:ee:ff" -> số nguyên 0xaabbccddeeff -> chuỗi thập phân.
+     */
     const hexadecimalMac = candidate.mac.replace(/[:-]/g, '');
     return BigInt(`0x${hexadecimalMac}`).toString();
 }
@@ -52,12 +59,12 @@ function discoverDeviceIdentifier() {
  */
 class BaseLoginRequest {
     /**
-     * @param {object} [options]
-     * @param {string} [options.deviceIdentifier] - Device ID thập phân; bỏ trống để tự xác định.
-     * @param {number} [options.timestamp] - Unix timestamp (giây); bỏ trống để lấy thời điểm hiện tại.
-     * @param {Buffer} [options.randomKey] - Khóa 16 byte dùng ở bước LoginPrepare; bỏ trống để sinh ngẫu nhiên.
-     * @param {Buffer} [options.initializationVector] - IV 8 byte cố định (chỉ dùng cho test).
-     * @param {'legacy'|'cryptographic'} [options.randomMode='legacy'] - Cách sinh IV của XTEA.
+     * - `options` (object, không bắt buộc): Các tùy chọn sau:
+     *   - `options.deviceIdentifier` (string, không bắt buộc): Device ID thập phân; bỏ trống để tự xác định.
+     *   - `options.timestamp` (number, không bắt buộc): Unix timestamp (giây); bỏ trống để lấy thời điểm hiện tại.
+     *   - `options.randomKey` (Buffer, không bắt buộc): Khóa 16 byte dùng ở bước LoginPrepare; bỏ trống để sinh ngẫu nhiên.
+     *   - `options.initializationVector` (Buffer, không bắt buộc): IV 8 byte cố định (chỉ dùng cho test).
+     *   - `options.randomMode` ('legacy'|'cryptographic', mặc định 'legacy'): Cách sinh IV của XTEA.
      */
     constructor(options = {}) {
         this.deviceIdentifier = options.deviceIdentifier || discoverDeviceIdentifier();
@@ -70,8 +77,8 @@ class BaseLoginRequest {
     /**
      * Dựng header Protobuf: version, device ID, command_type = 2, command, timestamp.
      *
-     * @param {number} command - Mã lệnh (ví dụ 256, 257, 277).
-     * @returns {Buffer} Byte header.
+     * - `command` (number): Mã lệnh (ví dụ 256, 257, 277).
+     * - Trả về (Buffer): Byte header.
      */
     buildHeader(command) {
         return Buffer.concat([
@@ -86,9 +93,9 @@ class BaseLoginRequest {
     /**
      * Mã hóa dữ liệu bằng XTEA tùy biến.
      *
-     * @param {Buffer} plaintext - Dữ liệu cần mã hóa.
-     * @param {Buffer} [encryptionKey] - Khóa 16 byte; mặc định là `randomKey`.
-     * @returns {Buffer} Bản mã.
+     * - `plaintext` (Buffer): Dữ liệu cần mã hóa.
+     * - `encryptionKey` (Buffer, không bắt buộc): Khóa 16 byte; mặc định là `randomKey`.
+     * - Trả về (Buffer): Bản mã.
      */
     encryptData(plaintext, encryptionKey = this.randomKey) {
         const cipher = new XteaCustom(encryptionKey, { randomMode: this.randomMode });
@@ -98,9 +105,9 @@ class BaseLoginRequest {
     /**
      * Dựng body gồm field 1 = khóa và field 2 = dữ liệu đã mã hóa.
      *
-     * @param {Buffer} encryptionKey - Khóa dùng để mã hóa (gửi kèm cho máy chủ).
-     * @param {Buffer} encryptedData - Dữ liệu đã mã hóa.
-     * @returns {Buffer} Byte body.
+     * - `encryptionKey` (Buffer): Khóa dùng để mã hóa (gửi kèm cho máy chủ).
+     * - `encryptedData` (Buffer): Dữ liệu đã mã hóa.
+     * - Trả về (Buffer): Byte body.
      */
     buildEncryptedBody(encryptionKey, encryptedData) {
         return Buffer.concat([encodeBytesField(1, encryptionKey), encodeBytesField(2, encryptedData)]);
@@ -113,17 +120,26 @@ class BaseLoginRequest {
  */
 class LoginPrepareRequest extends BaseLoginRequest {
     /**
-     * @param {string} account - Tên tài khoản hoặc email.
-     * @param {object} [options] - Xem `BaseLoginRequest`.
+     * - `account` (string): Tên tài khoản hoặc email.
+     * - `options` (object, không bắt buộc): Xem `BaseLoginRequest`.
      */
     constructor(account, options = {}) {
         super(options);
         this.account = account;
-        // auth_type: luôn là 0.
+
+        /*
+         * auth_type: luôn là 0.
+         */
         this.authenticationType = 0;
-        // account_type: 2 nếu tài khoản có dạng email, ngược lại 1.
+
+        /*
+         * account_type: 2 nếu tài khoản có dạng email, ngược lại 1.
+         */
         this.accountType = /^[^@]+@[^@]+\.[^@]+/.test(account) ? 2 : 1;
-        // client_type và client_version lấy nguyên từ Python, chưa xác minh còn được máy chủ chấp nhận.
+
+        /*
+         * client_type và client_version lấy nguyên từ Python, chưa xác minh còn được máy chủ chấp nhận.
+         */
         this.clientType = 4352;
         this.clientVersion = 246;
     }
@@ -132,7 +148,7 @@ class LoginPrepareRequest extends BaseLoginRequest {
      * Dựng dữ liệu gốc (trước khi mã hóa):
      * field 1 = auth_type, 2 = account_type, 3 = tài khoản UTF-8, 4 = client_type, 5 = client_version.
      *
-     * @returns {Buffer} Byte dữ liệu.
+     * - Trả về (Buffer): Byte dữ liệu.
      */
     buildRequestData() {
         return Buffer.concat([
@@ -147,7 +163,7 @@ class LoginPrepareRequest extends BaseLoginRequest {
     /**
      * Dựng packet hoàn chỉnh dạng header rõ; body = [field 1: randomKey][field 2: XTEA(randomKey, dữ liệu)].
      *
-     * @returns {Buffer} Packet gửi lên máy chủ.
+     * - Trả về (Buffer): Packet gửi lên máy chủ.
      */
     buildFullPacket() {
         const header = this.buildHeader(256);
@@ -164,17 +180,23 @@ class LoginPrepareRequest extends BaseLoginRequest {
  */
 class LoginRequest extends BaseLoginRequest {
     /**
-     * @param {string} password - Mật khẩu gốc.
-     * @param {Buffer|string} encryptionKey - Khóa 16 byte (Buffer hoặc chuỗi hex) từ `generateEncryptionKey`.
-     * @param {object} [options] - Xem `BaseLoginRequest`.
+     * - `password` (string): Mật khẩu gốc.
+     * - `encryptionKey` (Buffer|string): Khóa 16 byte (Buffer hoặc chuỗi hex) từ `generateEncryptionKey`.
+     * - `options` (object, không bắt buộc): Xem `BaseLoginRequest`.
      */
     constructor(password, encryptionKey, options = {}) {
         super(options);
         this.password = password;
         this.encryptionKey = Buffer.isBuffer(encryptionKey) ? encryptionKey : Buffer.from(encryptionKey, 'hex');
-        // login_mode: luôn là 0.
+
+        /*
+         * login_mode: luôn là 0.
+         */
         this.loginMode = 0;
-        // user_status: giá trị cố định 4608 lấy từ Python.
+
+        /*
+         * user_status: giá trị cố định 4608 lấy từ Python.
+         */
         this.userStatus = 4608;
     }
 
@@ -183,7 +205,7 @@ class LoginRequest extends BaseLoginRequest {
      * field 1 = chuỗi hex MD5 của mật khẩu, 2 = login_mode,
      * 3 = message lồng có field 2 = user_status, 4 = device ID dạng chuỗi.
      *
-     * @returns {Buffer} Byte dữ liệu.
+     * - Trả về (Buffer): Byte dữ liệu.
      */
     buildRequestData() {
         const passwordHash = createHash('md5').update(this.password, 'utf8').digest('hex');
@@ -200,7 +222,7 @@ class LoginRequest extends BaseLoginRequest {
     /**
      * Dựng packet hoàn chỉnh dạng header rõ; body chỉ có field 1 = bản mã (khác LoginPrepare).
      *
-     * @returns {Buffer} Packet gửi lên máy chủ.
+     * - Trả về (Buffer): Packet gửi lên máy chủ.
      */
     buildFullPacket() {
         const header = this.buildHeader(257);
@@ -216,8 +238,8 @@ class LoginRequest extends BaseLoginRequest {
  */
 class LoginTokenGetRequest extends BaseLoginRequest {
     /**
-     * @param {Buffer|string} sessionKey - Session key 16 byte (Buffer hoặc chuỗi hex) nhận từ LoginReply.
-     * @param {object} [options] - Xem `BaseLoginRequest`.
+     * - `sessionKey` (Buffer|string): Session key 16 byte (Buffer hoặc chuỗi hex) nhận từ LoginReply.
+     * - `options` (object, không bắt buộc): Xem `BaseLoginRequest`.
      */
     constructor(sessionKey, options = {}) {
         super(options);
@@ -227,7 +249,7 @@ class LoginTokenGetRequest extends BaseLoginRequest {
     /**
      * Dữ liệu body: field 1 = 1.
      *
-     * @returns {Buffer} Byte body.
+     * - Trả về (Buffer): Byte body.
      */
     buildRequestData() {
         return encodeVarintField(1, 1);
@@ -236,17 +258,19 @@ class LoginTokenGetRequest extends BaseLoginRequest {
     /**
      * Dựng packet: [u32 LE độ dài bản mã][XTEA(sessionKey, [u16 BE độ dài header][header][body])].
      *
-     * @returns {Buffer} Packet gửi lên máy chủ.
+     * - Trả về (Buffer): Packet gửi lên máy chủ.
      */
     buildFullPacket() {
         const header = this.buildHeader(277);
         const headerLength = Buffer.alloc(2);
+
         headerLength.writeUInt16BE(header.length);
 
         const plaintext = Buffer.concat([headerLength, header, this.buildRequestData()]);
         const encrypted = this.encryptData(plaintext, this.sessionKey);
 
         const frameLength = Buffer.alloc(4);
+
         frameLength.writeUInt32LE(encrypted.length);
 
         return Buffer.concat([frameLength, encrypted]);
@@ -260,9 +284,9 @@ class LoginTokenGetRequest extends BaseLoginRequest {
  */
 class EmptyPacket extends BaseLoginRequest {
     /**
-     * @param {Buffer|string} sessionKey - Session key 16 byte (Buffer hoặc chuỗi hex).
-     * @param {number} command - Mã lệnh ghi vào header.
-     * @param {object} [options] - Xem `BaseLoginRequest`.
+     * - `sessionKey` (Buffer|string): Session key 16 byte (Buffer hoặc chuỗi hex).
+     * - `command` (number): Mã lệnh ghi vào header.
+     * - `options` (object, không bắt buộc): Xem `BaseLoginRequest`.
      */
     constructor(sessionKey, command, options = {}) {
         super(options);
@@ -273,7 +297,7 @@ class EmptyPacket extends BaseLoginRequest {
     /**
      * Dựng packet: [u32 LE độ dài bản mã][XTEA(sessionKey, [u16 BE độ dài header][header])].
      *
-     * @returns {Buffer} Packet gửi lên máy chủ.
+     * - Trả về (Buffer): Packet gửi lên máy chủ.
      */
     buildFullPacket() {
         const header = this.buildHeader(this.command);
@@ -290,11 +314,4 @@ class EmptyPacket extends BaseLoginRequest {
     }
 }
 
-export {
-    discoverDeviceIdentifier,
-    BaseLoginRequest,
-    LoginPrepareRequest,
-    LoginRequest,
-    LoginTokenGetRequest,
-    EmptyPacket,
-};
+export { discoverDeviceIdentifier, BaseLoginRequest, LoginPrepareRequest, LoginRequest, LoginTokenGetRequest, EmptyPacket };

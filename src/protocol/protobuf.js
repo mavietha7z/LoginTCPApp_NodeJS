@@ -5,7 +5,9 @@
  * Hỗ trợ các wire type: 0 = varint, 1 = fixed64, 2 = length-delimited (bytes), 5 = fixed32.
  */
 
-/** Tên của từng field trong header packet, đánh số theo field number của Protobuf. */
+/**
+ * Tên của từng field trong header packet, đánh số theo field number của Protobuf.
+ */
 const HEADER_FIELD_NAMES = Object.freeze({
     1: 'version',
     2: 'id',
@@ -20,14 +22,14 @@ const HEADER_FIELD_NAMES = Object.freeze({
 /**
  * Chuyển giá trị sang BigInt và kiểm tra nằm trong phạm vi số nguyên không dấu 64 bit.
  *
- * @param {number|bigint|string} value - Giá trị cần chuyển.
- * @returns {bigint} Giá trị dạng BigInt trong khoảng [0, 2^64 - 1].
- * @throws {RangeError} Khi giá trị âm hoặc vượt quá 64 bit.
+ * - `value` (number|bigint|string): Giá trị cần chuyển.
+ * - Trả về (bigint): Giá trị dạng BigInt trong khoảng [0, 2^64 - 1].
+ * - Ném lỗi RangeError: Khi giá trị âm hoặc vượt quá 64 bit.
  */
 function toUnsignedBigInt(value) {
     const result = typeof value === 'bigint' ? value : BigInt(value);
     if (result < 0n || result > (1n << 64n) - 1n) {
-        throw new RangeError('Protobuf varint must fit an unsigned 64-bit integer');
+        throw new RangeError('Giá trị varint Protobuf phải nằm trong khoảng số nguyên không dấu 64 bit');
     }
     return result;
 }
@@ -35,8 +37,8 @@ function toUnsignedBigInt(value) {
 /**
  * Mã hóa số nguyên không dấu thành varint Protobuf (mỗi byte chứa 7 bit, bit cao = còn byte tiếp).
  *
- * @param {number|bigint|string} value - Số nguyên không dấu tối đa 64 bit.
- * @returns {Buffer} Các byte varint.
+ * - `value` (number|bigint|string): Số nguyên không dấu tối đa 64 bit.
+ * - Trả về (Buffer): Các byte varint.
  */
 function encodeVarint(value) {
     let remaining = toUnsignedBigInt(value);
@@ -46,7 +48,9 @@ function encodeVarint(value) {
         let nextByte = Number(remaining & 0x7fn);
         remaining >>= 7n;
         if (remaining !== 0n) {
-            // Bật bit 0x80 để báo vẫn còn byte phía sau.
+            /*
+             * Bật bit 0x80 để báo vẫn còn byte phía sau.
+             */
             nextByte |= 0x80;
         }
         encodedBytes.push(nextByte);
@@ -58,16 +62,18 @@ function encodeVarint(value) {
 /**
  * Đọc một varint từ buffer.
  *
- * @param {Buffer} buffer - Dữ liệu nguồn.
- * @param {number} startOffset - Vị trí bắt đầu đọc.
- * @returns {{ value: bigint, offset: number }} Giá trị đọc được và vị trí ngay sau varint.
- * @throws {Error} Khi hết dữ liệu giữa chừng hoặc varint vượt quá 64 bit.
+ * - `buffer` (Buffer): Dữ liệu nguồn.
+ * - `startOffset` (number): Vị trí bắt đầu đọc.
+ * - Trả về ({ value: bigint, offset: number }): Giá trị đọc được và vị trí ngay sau varint.
+ * - Ném lỗi Error: Khi hết dữ liệu giữa chừng hoặc varint vượt quá 64 bit.
  */
 function decodeVarint(buffer, startOffset) {
     let value = 0n;
     let offset = startOffset;
 
-    // Varint 64 bit dài tối đa 10 byte.
+    /*
+     * Varint 64 bit dài tối đa 10 byte.
+     */
     for (let index = 0; index < 10; index += 1) {
         if (offset >= buffer.length) {
             throw new Error('Unexpected end of protobuf varint');
@@ -76,7 +82,9 @@ function decodeVarint(buffer, startOffset) {
         const nextByte = buffer[offset];
         offset += 1;
 
-        // Byte thứ 10 chỉ được phép mang 1 bit (bit thứ 64).
+        /*
+         * Byte thứ 10 chỉ được phép mang 1 bit (bit thứ 64).
+         */
         if (index === 9 && nextByte > 1) {
             throw new Error('Protobuf varint exceeds 64-bit range');
         }
@@ -93,9 +101,9 @@ function decodeVarint(buffer, startOffset) {
 /**
  * Mã hóa một field kiểu varint (wire type 0): [tag][giá trị varint].
  *
- * @param {number} fieldNumber - Số thứ tự field.
- * @param {number|bigint|string} value - Giá trị số nguyên không dấu.
- * @returns {Buffer} Byte của field.
+ * - `fieldNumber` (number): Số thứ tự field.
+ * - `value` (number|bigint|string): Giá trị số nguyên không dấu.
+ * - Trả về (Buffer): Byte của field.
  */
 function encodeVarintField(fieldNumber, value) {
     const tag = encodeVarint((fieldNumber << 3) | 0);
@@ -105,9 +113,9 @@ function encodeVarintField(fieldNumber, value) {
 /**
  * Mã hóa một field kiểu bytes (wire type 2): [tag][độ dài varint][dữ liệu].
  *
- * @param {number} fieldNumber - Số thứ tự field.
- * @param {Buffer|string|Uint8Array} value - Dữ liệu; nếu không phải Buffer sẽ được chuyển bằng `Buffer.from`.
- * @returns {Buffer} Byte của field.
+ * - `fieldNumber` (number): Số thứ tự field.
+ * - `value` (Buffer|string|Uint8Array): Dữ liệu; nếu không phải Buffer sẽ được chuyển bằng `Buffer.from`.
+ * - Trả về (Buffer): Byte của field.
  */
 function encodeBytesField(fieldNumber, value) {
     const valueBuffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
@@ -121,62 +129,74 @@ function encodeBytesField(fieldNumber, value) {
  * Giải mã toàn bộ các field của một message Protobuf.
  * Field trùng số thứ tự sẽ ghi đè giá trị trước (giống dict trong Python), không gom thành mảng.
  *
- * @param {Buffer} buffer - Message Protobuf.
- * @returns {Map<number, { wireType: number, value: bigint|Buffer }>}
+ * - `buffer` (Buffer): Message Protobuf.
+ * - Trả về (Map<number, { wireType: number, value: bigint|Buffer }>):
  *   Map từ số field sang { wireType, value }; varint là BigInt, các kiểu còn lại là Buffer.
- * @throws {TypeError} Khi input không phải Buffer.
- * @throws {Error} Khi dữ liệu bị cắt cụt, field number không hợp lệ hoặc wire type không hỗ trợ.
+ * - Ném lỗi TypeError: Khi input không phải Buffer.
+ * - Ném lỗi Error: Khi dữ liệu bị cắt cụt, field number không hợp lệ hoặc wire type không hỗ trợ.
  */
 function decodeProtobufFields(buffer) {
     if (!Buffer.isBuffer(buffer)) {
-        throw new TypeError('Protobuf input must be a Buffer');
+        throw new TypeError('Dữ liệu Protobuf phải là Buffer');
     }
 
     const decodedFields = new Map();
     let offset = 0;
 
     while (offset < buffer.length) {
-        // Tag = (fieldNumber << 3) | wireType.
+        /*
+         * Tag = (fieldNumber << 3) | wireType.
+         */
         const fieldHeader = decodeVarint(buffer, offset);
         offset = fieldHeader.offset;
 
         const fieldNumber = Number(fieldHeader.value >> 3n);
         const wireType = Number(fieldHeader.value & 7n);
         if (fieldNumber < 1 || !Number.isSafeInteger(fieldNumber)) {
-            throw new Error('Invalid protobuf field number');
+            throw new Error('Số thứ tự field Protobuf không hợp lệ');
         }
 
         let value;
         if (wireType === 0) {
-            // Varint.
+            /*
+             * Varint.
+             */
             const decoded = decodeVarint(buffer, offset);
             value = decoded.value;
             offset = decoded.offset;
         } else if (wireType === 1 || wireType === 5) {
-            // fixed64 (8 byte) hoặc fixed32 (4 byte), giữ nguyên dạng byte.
+            /*
+             * fixed64 (8 byte) hoặc fixed32 (4 byte), giữ nguyên dạng byte.
+             */
             const fixedWidth = wireType === 1 ? 8 : 4;
             if (offset + fixedWidth > buffer.length) {
-                throw new Error('Truncated protobuf fixed-width field');
+                throw new Error('Field fixed-width Protobuf bị cắt cụt');
             }
+
             value = Buffer.from(buffer.subarray(offset, offset + fixedWidth));
             offset += fixedWidth;
         } else if (wireType === 2) {
-            // Length-delimited: [độ dài varint][dữ liệu].
+            /*
+             * Length-delimited: [độ dài varint][dữ liệu].
+             */
             const decodedLength = decodeVarint(buffer, offset);
             const length = Number(decodedLength.value);
             offset = decodedLength.offset;
 
             const lengthIsValid = Number.isSafeInteger(length) && length >= 0 && length <= buffer.length - offset;
             if (!lengthIsValid) {
-                throw new Error('Truncated or invalid protobuf length-delimited field');
+                throw new Error('Field Protobuf dạng length-delimited bị cắt cụt hoặc không hợp lệ');
             }
+
             value = Buffer.from(buffer.subarray(offset, offset + length));
             offset += length;
         } else {
-            throw new Error(`Unsupported protobuf wire type ${wireType} for field ${fieldNumber}`);
+            throw new Error(`Wire type Protobuf ${wireType} không được hỗ trợ cho field ${fieldNumber}`);
         }
 
-        // Giống dict trong Python: tag lặp lại sẽ thay thế giá trị trước đó.
+        /*
+         * Giống dict trong Python: tag lặp lại sẽ thay thế giá trị trước đó.
+         */
         decodedFields.set(fieldNumber, { wireType, value });
     }
 
@@ -187,8 +207,8 @@ function decodeProtobufFields(buffer) {
  * Chuyển BigInt sang kiểu an toàn cho JSON: Number nếu không vượt `Number.MAX_SAFE_INTEGER`,
  * ngược lại trả chuỗi thập phân để không mất độ chính xác.
  *
- * @param {bigint} value - Giá trị BigInt.
- * @returns {number|string} Giá trị dùng được trong JSON.
+ * - `value` (bigint): Giá trị BigInt.
+ * - Trả về (number|string): Giá trị dùng được trong JSON.
  */
 function convertBigIntForJson(value) {
     return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
@@ -198,8 +218,8 @@ function convertBigIntForJson(value) {
  * Giải mã header packet thành object có tên field (xem `HEADER_FIELD_NAMES`).
  * Field lạ được đặt tên `unknown_field_<số>`; field bytes được biểu diễn dạng chuỗi hex.
  *
- * @param {Buffer} headerBytes - Byte header Protobuf.
- * @returns {Record<string, number|string>} Header đã giải mã.
+ * - `headerBytes` (Buffer): Byte header Protobuf.
+ * - Trả về (Record<string, number|string>): Header đã giải mã.
  */
 function decodePacketHeader(headerBytes) {
     const fields = decodeProtobufFields(headerBytes);
@@ -222,12 +242,4 @@ function decodePacketHeader(headerBytes) {
     return header;
 }
 
-export {
-    encodeVarint,
-    decodeVarint,
-    encodeVarintField,
-    encodeBytesField,
-    decodeProtobufFields,
-    decodePacketHeader,
-    convertBigIntForJson,
-};
+export { encodeVarint, decodeVarint, encodeVarintField, encodeBytesField, decodeProtobufFields, decodePacketHeader, convertBigIntForJson };
