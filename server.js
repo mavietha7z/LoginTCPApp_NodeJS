@@ -1,5 +1,6 @@
 import http from 'node:http';
 import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { timingSafeEqual } from 'node:crypto';
 
@@ -225,12 +226,30 @@ function createServer(configuration, loginService = loginAndGetKeys) {
     return server;
 }
 
+/**
+ * Kiểm tra file được chạy trực tiếp (`node server.js`) có phải chính module này không.
+ * So sánh đường dẫn thật (đã giải symlink) của hai bên: production chạy qua symlink
+ * `current/server.js`, còn Node đặt `import.meta.url` theo đường dẫn thật trong `releases/`.
+ *
+ * - Trả về (boolean): true khi chạy trực tiếp, false khi được `import` (ví dụ trong test).
+ */
+function isRunDirectly() {
+    if (process.argv[1] === undefined) {
+        return false;
+    }
+
+    const modulePath = fileURLToPath(import.meta.url);
+    try {
+        return realpathSync(process.argv[1]) === realpathSync(modulePath);
+    } catch {
+        return resolve(process.argv[1]) === modulePath;
+    }
+}
+
 /*
  * Chỉ khởi động server khi chạy trực tiếp `node server.js`, không chạy khi được `import` trong test.
- * So sánh đường dẫn file đang chạy (process.argv[1]) với đường dẫn của chính module này.
  */
-const isRunDirectly = process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isRunDirectly) {
+if (isRunDirectly()) {
     try {
         const configuration = loadConfiguration();
         const server = createServer(configuration);
