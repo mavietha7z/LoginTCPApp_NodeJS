@@ -33,9 +33,14 @@ function readIntegerEnvironmentVariable(name, defaultValue, minimum, maximum) {
  *   - `randomMode` (string): Cách sinh IV của XTEA.
  *   - `maximumRetries` (number): Số lần thử đăng nhập tối đa.
  *   - `responseWindowMilliseconds`, `responseIdleTimeoutMilliseconds` (number): Thời gian chờ phản hồi SSO.
- *   - `transportOptions` (object): Tùy chọn cho `TcpClient` gồm `serverHost`, `serverPort`, `proxyUrl`,
- *     `connectTimeoutMilliseconds`, `readTimeoutMilliseconds`, `maximumPacketBytes`.
- * - Ném lỗi Error: Khi thiếu `API_KEY` (hoặc ngắn hơn 24 ký tự), proxy sai định dạng, hoặc biến số không hợp lệ.
+ *   - `nestproxyProxyKey` (string hoặc null): `proxy_key` của nestproxy (`NESTPROXY_PROXY_KEY`); có giá trị thì
+ *     mỗi lượt đăng nhập lấy proxy SOCKS5 từ nestproxy.
+ *   - `nestproxyRotateSeconds` (number): Dùng một IP nestproxy bao nhiêu giây rồi đổi IP mới
+ *     (`NESTPROXY_ROTATE_SECONDS`, mặc định và tối thiểu 60).
+ *   - `transportOptions` (object): Tùy chọn cho `TcpClient` gồm `serverHost`, `serverPort`,
+ *     `connectTimeoutMilliseconds`, `readTimeoutMilliseconds`, `maximumPacketBytes`; `proxyUrl` luôn null
+ *     (proxy được gắn cho từng lượt đăng nhập từ nestproxy).
+ * - Ném lỗi Error: Khi thiếu `API_KEY` (hoặc ngắn hơn 24 ký tự) hoặc biến số không hợp lệ.
  */
 function loadConfiguration() {
     /*
@@ -47,15 +52,14 @@ function loadConfiguration() {
     }
 
     /*
-     * Proxy chỉ chấp nhận SOCKS5 (phân giải DNS tại máy) hoặc SOCKS5h (proxy phân giải DNS).
+     * Proxy SOCKS5 lấy tự động từ nestproxy theo proxy_key; không đặt thì gọi thẳng máy chủ TCP.
      */
-    const socksProxyUrl = process.env.SOCKS_PROXY_URL || null;
-    if (socksProxyUrl && !/^socks5h?:\/\//i.test(socksProxyUrl)) {
-        throw new Error('SOCKS_PROXY_URL phải bắt đầu với socks5:// hoặc socks5h://');
-    }
+    const nestproxyProxyKey = process.env.NESTPROXY_PROXY_KEY?.trim() || null;
 
     return {
         apiKey,
+        nestproxyProxyKey,
+        nestproxyRotateSeconds: readIntegerEnvironmentVariable('NESTPROXY_ROTATE_SECONDS', 60, 60, 86400),
         httpHost: process.env.HTTP_HOST || 'localhost',
         deviceIdentifier: process.env.DEVICE_ID || undefined,
         randomMode: process.env.XTEA_RANDOM_MODE || 'legacy',
@@ -65,7 +69,7 @@ function loadConfiguration() {
         responseWindowMilliseconds: readIntegerEnvironmentVariable('RESPONSE_WINDOW_MS', 3000, 250, 30000),
         responseIdleTimeoutMilliseconds: readIntegerEnvironmentVariable('RESPONSE_IDLE_TIMEOUT_MS', 500, 100, 5000),
         transportOptions: {
-            proxyUrl: socksProxyUrl,
+            proxyUrl: null,
             serverHost: process.env.TCP_SERVER_HOST || '103.247.205.15',
             serverPort: readIntegerEnvironmentVariable('TCP_SERVER_PORT', 19000, 1, 65535),
             readTimeoutMilliseconds: readIntegerEnvironmentVariable('READ_TIMEOUT_MS', 5000, 100, 60000),

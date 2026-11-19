@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { timingSafeEqual } from 'node:crypto';
 
 import { loadConfiguration } from './src/configuration.js';
+import { NestproxyClient } from './src/proxy/nestproxy-client.js';
 import { loginAndGetKeys } from './src/services/login-service.js';
 
 /**
@@ -136,6 +137,15 @@ function createServer(configuration, loginService = loginAndGetKeys) {
      */
     let activeLoginCount = 0;
 
+    /*
+     * Nguồn proxy động: có NESTPROXY_PROXY_KEY thì tạo một client nestproxy dùng chung cho mọi request,
+     * để một IP được dùng chung trong cả chu kỳ rồi mới đổi IP mới.
+     */
+    const rotateIntervalMilliseconds = (configuration.nestproxyRotateSeconds ?? 60) * 1000;
+    const proxyProvider = configuration.nestproxyProxyKey
+        ? new NestproxyClient({ proxyKey: configuration.nestproxyProxyKey, rotateIntervalMilliseconds })
+        : null;
+
     const server = http.createServer(async (request, response) => {
         if (request.method === 'GET' && request.url === '/health') {
             sendJson(response, 200, { status: 'ok' });
@@ -189,6 +199,7 @@ function createServer(configuration, loginService = loginAndGetKeys) {
         activeLoginCount += 1;
         try {
             const result = await loginService(username, password, {
+                proxyProvider,
                 randomMode: configuration.randomMode,
                 maximumRetries: configuration.maximumRetries,
                 transportOptions: configuration.transportOptions,

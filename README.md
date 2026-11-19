@@ -14,10 +14,13 @@ LoginTCPApp_NodeJS/
 ├── .gitignore
 ├── README.md
 ├── ANALYSIS.md                         # Phân tích chi tiết file Python
-├── DEPLOY.md                           # Hướng dẫn triển khai VPS + SSH tunnel
-├── deploy/                             # Script cài đặt, systemd, Caddy, cấu hình SSH tunnel
+├── deploy.sh                           # Deploy lên VPS bằng một lệnh (hỏi mật khẩu VPS)
+├── DEPLOY.md                           # Hướng dẫn triển khai VPS
+├── deploy/                             # Script cài đặt trên VPS, systemd, Caddy
 ├── src/
 │   ├── configuration.js                # Đọc và kiểm tra biến môi trường
+│   ├── proxy/
+│   │   └── nestproxy-client.js         # Lấy proxy SOCKS5 từ nestproxy, đổi IP theo chu kỳ
 │   ├── crypto/
 │   │   ├── xtea-custom.js              # Custom XTEA (đúng thuật toán Python)
 │   │   └── encryption-key.js           # MD5 -> SHA256 -> SHA256
@@ -34,6 +37,7 @@ LoginTCPApp_NodeJS/
 └── test/
     ├── protocol.test.js                # Đối chiếu XTEA, Protobuf, packet với Python
     ├── login-service.test.js           # Máy chủ giả, SOCKS5 giả, xác thực HTTP
+    ├── nestproxy-client.test.js        # Lấy và đổi proxy nestproxy
     └── fixtures/
         ├── python-vectors.json         # Vector mã hóa do Python sinh ra
         └── python-packets.json         # Packet do Python sinh ra
@@ -56,10 +60,10 @@ Mở `.env` và sửa `API_KEY` thành chuỗi bí mật mạnh. Tạo chuỗi m
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-Nếu dùng SSH SOCKS5 qua VPS trung gian và tunnel `127.0.0.1:1080` đã bật, bỏ dấu `#` ở dòng:
+Nếu muốn kết nối tới máy chủ TCP đi qua proxy SOCKS5 của nestproxy.com, điền `proxy_key` ở dòng:
 
 ```dotenv
-SOCKS_PROXY_URL=socks5h://127.0.0.1:1080
+NESTPROXY_PROXY_KEY=<proxy_key>
 ```
 
 Lưu ý: TCP đi qua SOCKS5 **khác** HTTP Axios/fetch proxy. Bản Node.js tự triển khai SOCKS5 trên `node:net`, không cần `socks-proxy-agent` hay `axios`.
@@ -135,7 +139,8 @@ Hệ thống không cố bỏ qua CAPTCHA. `GET /api/login` của Python đã b�
 | `HTTP_PORT`                | `5000`           | Cổng API                                                                                                      |
 | `TCP_SERVER_HOST`          | `103.247.205.15` | Địa chỉ có trong Python gốc, chưa xác minh còn hoạt động                                                      |
 | `TCP_SERVER_PORT`          | `19000`          | Cổng TCP trong Python                                                                                         |
-| `SOCKS_PROXY_URL`          | Trống            | Ví dụ `socks5h://127.0.0.1:1080`                                                                              |
+| `NESTPROXY_PROXY_KEY`      | Trống            | `proxy_key` của nestproxy.com: mỗi lượt đăng nhập tự lấy proxy SOCKS5 từ nestproxy; trống thì gọi thẳng       |
+| `NESTPROXY_ROTATE_SECONDS` | `60`             | Dùng một IP nestproxy bao nhiêu giây rồi đổi IP mới (tối thiểu 60)                                            |
 | `DEVICE_ID`                | Lấy từ MAC máy   | Device ID dưới dạng số thập phân                                                                              |
 | `MAX_RETRIES`              | `3`              | Số lần thử tối đa (không thử lại khi gặp CAPTCHA hoặc lỗi xác thực)                                           |
 | `MAX_CONCURRENT_LOGINS`    | `3`              | Giới hạn số lượt đăng nhập song song trong một tiến trình                                                     |
@@ -156,7 +161,7 @@ Sao chép kết quả số thập phân vào `DEVICE_ID=...` của `.env`. Đây
 
 ## Triển khai lên VPS
 
-Xem [DEPLOY.md](DEPLOY.md): Ubuntu 24.04, Caddy (HTTPS cho `api-gateway.ha2cm.com`), systemd. Trên VPS app gọi thẳng máy chủ TCP; máy local dùng SSH SOCKS tunnel tới VPS (`SOCKS_PROXY_URL=socks5h://127.0.0.1:1080`) để đi ra cùng IP.
+Chạy `bash deploy.sh` (Git Bash): script hỏi mật khẩu VPS, gửi code lên và cài/khởi động lại app, giữ nguyên `.env` trên VPS. Chi tiết và việc chuẩn bị lần đầu xem [DEPLOY.md](DEPLOY.md).
 
 ## Tích hợp vào backend dự án khác
 
@@ -165,13 +170,18 @@ Nếu muốn gọi trực tiếp từ backend Node.js (không mở thêm cổng 
 ```js
 import { loginAndGetKeys } from './src/services/login-service.js';
 
+import { NestproxyClient } from './src/proxy/nestproxy-client.js';
+
+/* Tạo một lần và dùng chung, để mỗi IP được dùng đủ chu kỳ rồi mới đổi. */
+const proxyProvider = new NestproxyClient({ proxyKey: process.env.NESTPROXY_PROXY_KEY });
+
 const result = await loginAndGetKeys('account-owned-by-you', 'password', {
     maximumRetries: 1,
+    proxyProvider,
     deviceIdentifier: process.env.DEVICE_ID,
     transportOptions: {
         serverHost: process.env.TCP_SERVER_HOST,
         serverPort: Number(process.env.TCP_SERVER_PORT),
-        proxyUrl: process.env.SOCKS_PROXY_URL || null,
     },
 });
 ```

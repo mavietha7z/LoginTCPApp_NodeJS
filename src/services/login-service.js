@@ -108,7 +108,10 @@ function isEndOfResponseStream(error) {
  *   - `options.deviceIdentifier` (string, không bắt buộc): Device ID thập phân; bỏ trống để tự xác định.
  *   - `options.randomMode` ('legacy'|'cryptographic', mặc định 'legacy'): Cách sinh IV của XTEA.
  *   - `options.transportOptions` (object, không bắt buộc): Tùy chọn truyền cho `TcpClient`.
- *   - `options.transportFactory` (() => object, không bắt buộc): Hàm tạo transport thay cho `TcpClient` (dùng trong test).
+ *   - `options.transportFactory` ((transportOptions) => object, không bắt buộc): Hàm tạo transport thay cho
+ *     `TcpClient` (dùng trong test); nhận `transportOptions` đã gắn proxy.
+ *   - `options.proxyProvider` (object, không bắt buộc): Nguồn proxy động có `getProxyUrl()` và `invalidate()`
+ *     (ví dụ `NestproxyClient`). Có giá trị thì mỗi lần thử lấy URL proxy từ đây, ghi đè `transportOptions.proxyUrl`.
  *   - `options.responseWindowMilliseconds` (number, mặc định 3000): Tổng thời gian chờ SsoKeyGetReply.
  *   - `options.responseIdleTimeoutMilliseconds` (number, mặc định 500): Thời gian chờ tối đa giữa hai frame.
  *   - `options.maximumFollowUpFrames` (number, mặc định 64): Số frame tối đa đọc khi chờ SSO key.
@@ -125,9 +128,18 @@ async function loginAndGetKeys(account, password, options = {}) {
     let lastErrorCode = INTERNAL_ERROR_CODES.NO_ATTEMPT;
 
     for (attempt = 1; attempt <= maximumRetries; attempt += 1) {
-        const tcpClient = options.transportFactory ? options.transportFactory() : new TcpClient(options.transportOptions);
+        let tcpClient = null;
 
         try {
+            /*
+             * Nếu có nguồn proxy động (nestproxy), lấy proxy cho lần thử này; lỗi lấy proxy được tính là lỗi kết nối.
+             */
+            const transportOptions = { ...options.transportOptions };
+            if (options.proxyProvider) {
+                transportOptions.proxyUrl = await options.proxyProvider.getProxyUrl();
+            }
+
+            tcpClient = options.transportFactory ? options.transportFactory(transportOptions) : new TcpClient(transportOptions);
             await tcpClient.connect();
 
             /*
@@ -291,8 +303,13 @@ async function loginAndGetKeys(account, password, options = {}) {
              * máy chủ/proxy (lỗi đã ghi nhận khi audit, chưa sửa vì đợt này giữ nguyên logic).
              */
             lastErrorMessage = error instanceof TimeoutError ? 'Kết nối TCP hết thời gian chờ' : error.message;
+
+            /*
+             * Proxy động có thể đã đổi hoặc hết hạn: bỏ bản giữ tạm để lần thử sau hỏi lại nguồn proxy.
+             */
+            options.proxyProvider?.invalidate();
         } finally {
-            tcpClient.close();
+            tcpClient?.close();
         }
     }
 

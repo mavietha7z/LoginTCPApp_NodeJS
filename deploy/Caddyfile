@@ -1,14 +1,14 @@
-# Mẫu cấu hình Caddy cho VPS. `setup-vps.sh` thay __SITE_ADDRESS__ và __APP_PORT__ rồi chép vào /etc/caddy/Caddyfile.
+# Mẫu cấu hình Caddy cho VPS. `setup-vps.sh` thay __DOMAIN__, __CERTIFICATE_FILE__, __KEY_FILE__ và __APP_PORT__
+# rồi chép vào /etc/caddy/Caddyfile.
 #
-# __SITE_ADDRESS__ phụ thuộc chế độ SSL/TLS của Cloudflare (biến SSL_MODE của setup-vps.sh):
-#   - flexible (mặc định): `http://<domain>` — Caddy chỉ nghe HTTP cổng 80, không xin chứng chỉ, không chuyển hướng
-#     sang HTTPS (tránh vòng lặp chuyển hướng). Cloudflare lo HTTPS phía người dùng.
-#     LƯU Ý: đoạn Cloudflare -> VPS là HTTP không mã hóa.
-#   - full: `<domain>` — Caddy tự xin chứng chỉ Let's Encrypt, dùng với Cloudflare "Full (strict)".
+# Cloudflare để chế độ "Full (strict)": Caddy dùng Cloudflare Origin Certificate, không xin chứng chỉ Let's Encrypt;
+# đoạn Cloudflare -> VPS được mã hóa.
 #
 # KHÔNG bật chỉ thị `log` ở đây: access log của Caddy ghi cả header request, trong đó có X-API-Key.
 
-__SITE_ADDRESS__ {
+https://__DOMAIN__ {
+	tls __CERTIFICATE_FILE__ __KEY_FILE__
+
 	# Tùy chọn: chỉ cho phép một số IP gọi API (ví dụ IP backend của bạn).
 	# Đi qua Cloudflare nên IP thật của người gọi nằm ở header CF-Connecting-IP; header này đáng tin vì
 	# firewall chỉ cho các dải IP của Cloudflare kết nối vào VPS. Bỏ dấu # ở 2 dòng dưới và thay danh sách IP.
